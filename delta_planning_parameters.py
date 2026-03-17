@@ -70,7 +70,10 @@ df_source = df_source.select(*target_columns).withColumn(
     "create_date", F.date_format(F.current_timestamp(), "yyyyMMdd")
 )
 
-print(f"Source records (filtered): {df_source.count()}")
+# Deduplicate source on business key (keep first occurrence)
+df_source = df_source.dropDuplicates(BUSINESS_KEY)
+
+print(f"Source records (filtered & deduplicated): {df_source.count()}")
 
 # COMMAND ----------
 
