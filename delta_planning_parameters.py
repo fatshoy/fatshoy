@@ -7,14 +7,11 @@
 # MAGIC
 # MAGIC Loads planning parameters from `plant_material_dim` into `mm_init_planning_parameter_dim`.
 # MAGIC - **First run**: full load (creates target table if not exists)
-# MAGIC - **Ongoing runs**: delta load via MERGE (upsert by source_system_code + plant_code + material_id)
+# MAGIC - **Ongoing runs**: INSERT only new combinations (LEFT ANTI JOIN on business key)
 # MAGIC
-# MAGIC ### Assumptions (to be confirmed with product owner):
-# MAGIC 1. Parameters can change over time → MERGE with SCD Type 1 (overwrite)
-# MAGIC 2. `mda` alias in original SQL is a typo → should be `pp`
-# MAGIC 3. Notebook runs daily
-# MAGIC 4. Source system codes list is parameterized
-# MAGIC 5. Target table is auto-created on first run
+# MAGIC **Strategy**: Only the first appearance of a business key is kept.
+# MAGIC Parameters may change in source, but we intentionally preserve the initial values.
+# MAGIC Runs daily on both dev and prod.
 
 # COMMAND ----------
 
@@ -47,7 +44,7 @@ COLUMN_MAPPING = {
     "rounding_value_for_purchase_order_quantity": "round_value",
 }
 
-# Business key columns (used for MERGE match condition)
+# Business key columns (used for deduplication / anti-join)
 BUSINESS_KEY = ["source_system_code", "site_code", "material_id"]
 
 # COMMAND ----------
@@ -58,9 +55,6 @@ BUSINESS_KEY = ["source_system_code", "site_code", "material_id"]
 # COMMAND ----------
 
 from pyspark.sql import functions as F
-
-# Read source with filter
-source_codes_str = ", ".join([f"'{c}'" for c in SOURCE_SYSTEM_CODES])
 
 df_source = spark.read.table(SOURCE_TABLE).filter(
     F.col("source_system_code").isin(SOURCE_SYSTEM_CODES)
@@ -100,7 +94,7 @@ print(f"Target table '{TARGET_TABLE}' exists: {target_exists}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Initial load or Delta (MERGE)
+# MAGIC ## Step 3: Initial load or Delta (INSERT new only)
 
 # COMMAND ----------
 
@@ -113,31 +107,22 @@ if not target_exists:
     print(f"Initial load complete. Records written: {df_source.count()}")
 
 else:
-    # --- DELTA LOAD (MERGE / UPSERT) ---
-    print("Performing DELTA LOAD (MERGE)")
+    # --- DELTA LOAD (INSERT only new business keys) ---
+    print("Performing DELTA LOAD (INSERT new combinations only)")
 
-    from delta.tables import DeltaTable
+    df_target = spark.read.table(TARGET_TABLE)
 
-    dt_target = DeltaTable.forName(spark, TARGET_TABLE)
+    # LEFT ANTI JOIN: keep only source rows whose business key does NOT exist in target
+    df_new = df_source.join(df_target, on=BUSINESS_KEY, how="left_anti")
 
-    # Build merge condition on business key
-    merge_condition = " AND ".join(
-        [f"target.{col} = source.{col}" for col in BUSINESS_KEY]
-    )
+    new_count = df_new.count()
+    print(f"New records to insert: {new_count}")
 
-    # MERGE: update existing rows, insert new ones
-    dt_target.alias("target").merge(
-        df_source.alias("source"),
-        merge_condition,
-    ).whenMatchedUpdate(
-        set={
-            col: f"source.{col}"
-            for col in target_columns + ["create_date"]
-            if col not in BUSINESS_KEY
-        }
-    ).whenNotMatchedInsertAll().execute()
-
-    print("Delta MERGE complete.")
+    if new_count > 0:
+        df_new.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
+        print(f"Inserted {new_count} new records.")
+    else:
+        print("No new records to insert. Skipping.")
 
 # COMMAND ----------
 
