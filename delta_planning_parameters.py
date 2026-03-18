@@ -5,6 +5,8 @@
 # MAGIC %md
 # MAGIC # Delta Planning Parameters
 # MAGIC
+# MAGIC This notebook captures the initial MRP planning parameters (PDT, firm/trade-off zones, GR processing days, lot size, rounding value) for each plant-material combination at the moment it first appears in the source system, and preserves those baseline values for ongoing comparison with actual planning behavior.
+# MAGIC
 # MAGIC Loads planning parameters from `plant_material_dim` into `mm_init_planning_parameter_dim`.
 # MAGIC - **First run**: full load (creates target table if not exists)
 # MAGIC - **Ongoing runs**: INSERT only new combinations (LEFT ANTI JOIN on business key)
