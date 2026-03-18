@@ -57,7 +57,8 @@ BUSINESS_KEY = ["source_system_code", "site_code", "material_id"]
 from pyspark.sql import functions as F
 
 df_source = spark.read.table(SOURCE_TABLE).filter(
-    F.col("source_system_code").isin(SOURCE_SYSTEM_CODES)
+    (F.col("source_system_code").isin(SOURCE_SYSTEM_CODES))
+    & (F.length(F.col("material_id")) == 18)
 )
 
 # Apply column mapping (rename source columns to target names)
