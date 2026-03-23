@@ -86,10 +86,9 @@ print(f"Source records (filtered & deduplicated): {df_source.count()}")
 # COMMAND ----------
 
 def table_exists(table_name: str) -> bool:
-    """Check if a Delta table exists."""
+    """Check if a Delta table exists and contains data."""
     try:
-        spark.read.table(table_name)
-        return True
+        return spark.read.table(table_name).head(1) is not None
     except Exception:
         return False
 
