@@ -27,8 +27,8 @@
 # Source table (fully qualified)
 SOURCE_TABLE = "app_fps_prod.inbound_supply_chain_shares.plant_material_dim"
 
-# Target table (fully qualified)
-TARGET_TABLE = "app_fps_prod.inbound_supply_chain_shares.mm_init_planning_parameter_dim"
+# Target path (parquet storage)
+TARGET_PATH = "/mnt/mda-pipeline-refined/mm_init_planning_parameter_dim"
 
 # Source system codes to process — extend this list as needed
 SOURCE_SYSTEM_CODES = ["A6PS4H", "F6PS4H", "N6P420", "L6P430"]
@@ -85,16 +85,17 @@ print(f"Source records (filtered & deduplicated): {df_source.count()}")
 
 # COMMAND ----------
 
-def table_exists(table_name: str) -> bool:
-    """Check if a Delta table exists and contains data."""
+def path_has_parquet(path: str) -> bool:
+    """Check if path exists AND contains at least one .parquet file."""
     try:
-        return spark.read.table(table_name).head(1) is not None
+        files = dbutils.fs.ls(path)
+        return any(f.name.endswith(".parquet") for f in files)
     except Exception:
         return False
 
 
-target_exists = table_exists(TARGET_TABLE)
-print(f"Target table '{TARGET_TABLE}' exists: {target_exists}")
+is_initial_load = not path_has_parquet(TARGET_PATH)
+print(f"Target path '{TARGET_PATH}' has data: {not is_initial_load}")
 
 # COMMAND ----------
 
@@ -103,31 +104,26 @@ print(f"Target table '{TARGET_TABLE}' exists: {target_exists}")
 
 # COMMAND ----------
 
-if not target_exists:
+if is_initial_load:
     # --- INITIAL LOAD ---
-    print("Performing INITIAL LOAD (target table does not exist)")
-
-    df_source.write.format("delta").mode("overwrite").saveAsTable(TARGET_TABLE)
-
-    print(f"Initial load complete. Records written: {df_source.count()}")
-
+    print("INITIAL LOAD (target does not exist or is empty)")
+    df_to_save = df_source
+    save_mode = "overwrite"
 else:
     # --- DELTA LOAD (INSERT only new business keys) ---
-    print("Performing DELTA LOAD (INSERT new combinations only)")
+    print("DELTA LOAD (append new combinations only)")
+    df_target = spark.read.parquet(TARGET_PATH)
+    df_to_save = df_source.join(df_target, on=BUSINESS_KEY, how="left_anti")
+    save_mode = "append"
 
-    df_target = spark.read.table(TARGET_TABLE)
+new_count = df_to_save.count()
+print(f"Records to {save_mode}: {new_count}")
 
-    # LEFT ANTI JOIN: keep only source rows whose business key does NOT exist in target
-    df_new = df_source.join(df_target, on=BUSINESS_KEY, how="left_anti")
-
-    new_count = df_new.count()
-    print(f"New records to insert: {new_count}")
-
-    if new_count > 0:
-        df_new.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
-        print(f"Inserted {new_count} new records.")
-    else:
-        print("No new records to insert. Skipping.")
+if new_count > 0:
+    df_to_save.write.mode(save_mode).parquet(TARGET_PATH)
+    print(f"{save_mode.capitalize()} complete: {new_count} records.")
+else:
+    print("No new records. Skipping.")
 
 # COMMAND ----------
 
@@ -136,7 +132,7 @@ else:
 
 # COMMAND ----------
 
-df_result = spark.read.table(TARGET_TABLE)
+df_result = spark.read.parquet(TARGET_PATH)
 total_count = df_result.count()
 
 # Check for duplicates on business key
