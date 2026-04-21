@@ -27,8 +27,10 @@
 # Source table (fully qualified)
 SOURCE_TABLE = "app_fps_prod.inbound_supply_chain_shares.plant_material_dim"
 
-# Target path (parquet storage)
+# Target table name (used by saveTable/saveTabletemp)
+TARGET_TABLE_NAME = "mm_init_planning_parameter_dim"
 TARGET_PATH = "/mnt/mda-pipeline-refined/mm_init_planning_parameter_dim"
+TEMP_PATH = "/mnt/mda-pipeline-temp/mm_init_planning_parameter_dim"
 
 # Source system codes to process — extend this list as needed
 SOURCE_SYSTEM_CODES = ["A6PS4H", "F6PS4H", "N6P420", "L6P430"]
@@ -82,78 +84,58 @@ print(f"Source records (filtered & deduplicated): {df_source.count()}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 2: Check if target table exists
+# MAGIC ## Step 2: Determine load type and build delta
 
 # COMMAND ----------
 
-def path_has_parquet(path: str) -> bool:
-    """Check if path exists AND contains at least one .parquet file."""
+def path_has_data(path: str) -> bool:
     try:
         files = dbutils.fs.ls(path)
-        return any(f.name.endswith(".parquet") for f in files)
+        return any(f.name.endswith(".parquet") or "_delta_log" in f.name for f in files)
     except Exception:
         return False
 
 
-is_initial_load = not path_has_parquet(TARGET_PATH)
-print(f"Target path '{TARGET_PATH}' has data: {not is_initial_load}")
+is_initial_load = not path_has_data(TEMP_PATH)
+
+if is_initial_load:
+    print("INITIAL LOAD (temp table does not exist)")
+    df_to_save = df_source
+    temp_save_mode = "overwrite"
+else:
+    print("DELTA LOAD (append new combinations only)")
+    df_temp_existing = spark.read.format("delta").load(TEMP_PATH)
+    df_to_save = df_source.join(df_temp_existing, on=BUSINESS_KEY, how="left_anti")
+    temp_save_mode = "append"
+
+new_count = df_to_save.count()
+print(f"New records: {new_count}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Initial load or Delta (INSERT new only)
+# MAGIC ## Step 3: Save to temp (delta, append)
 
 # COMMAND ----------
 
-if is_initial_load:
-    # --- INITIAL LOAD ---
-    print("INITIAL LOAD (target does not exist or is empty)")
-    df_to_save = df_source
-    save_mode = "overwrite"
-else:
-    # --- DELTA LOAD (INSERT only new business keys) ---
-    print("DELTA LOAD (append new combinations only)")
-    df_target = spark.read.parquet(TARGET_PATH)
-    df_to_save = df_source.join(df_target, on=BUSINESS_KEY, how="left_anti")
-    save_mode = "append"
-
-new_count = df_to_save.count()
-print(f"Records to {save_mode}: {new_count}")
-
+# Accumulate in temp as delta format (supports append without file fragmentation issues)
 if new_count > 0:
-    df_to_save.write.mode(save_mode).parquet(TARGET_PATH)
-    print(f"{save_mode.capitalize()} complete: {new_count} records.")
+    saveTabletemp(TARGET_TABLE_NAME, 'delta', temp_save_mode, df_to_save)
 else:
     print("No new records. Skipping.")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 4: Validation
+# MAGIC ## Step 4: DQ check and save to SA (parquet, overwrite)
 
 # COMMAND ----------
 
-df_result = spark.read.parquet(TARGET_PATH)
-total_count = df_result.count()
-
-# Check for duplicates on business key
-df_dupes = df_result.groupBy(*BUSINESS_KEY).count().filter(F.col("count") > 1)
-dupe_count = df_dupes.count()
-
-print(f"Total records in target: {total_count}")
-print(f"Duplicate business keys:  {dupe_count}")
-
-if dupe_count > 0:
-    print("WARNING: Duplicates detected!")
-    df_dupes.show(10, truncate=False)
+# Read full accumulated dataset from temp, validate, and overwrite final parquet
+if new_count > 0:
+    df_temp = spark.read.format("delta").load(TEMP_PATH)
+    result = expect_table_records_to_be_unique(df_temp, TARGET_TABLE_NAME, False, BUSINESS_KEY, False)
+    if result == 'Success':
+        saveTable(TARGET_TABLE_NAME, 'parquet', 'overwrite', df_temp)
 else:
-    print("OK: No duplicates found.")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Step 5: Preview
-
-# COMMAND ----------
-
-df_result.orderBy(*BUSINESS_KEY).show(20, truncate=False)
+    print("No new records. Skipping.")
