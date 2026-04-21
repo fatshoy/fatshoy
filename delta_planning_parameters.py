@@ -67,14 +67,15 @@ df_source = spark.read.table(SOURCE_TABLE).filter(
 for src_col, tgt_col in COLUMN_MAPPING.items():
     df_source = df_source.withColumnRenamed(src_col, tgt_col)
 
-# Select only mapped columns + add create_date
+# Select only mapped columns, deduplicate on business key, then add create_date
+# Order matters: dedup BEFORE adding create_date so the timestamp column does not
+# artificially inflate rows for the same business key combination.
 target_columns = list(COLUMN_MAPPING.values())
-df_source = df_source.select(*target_columns).withColumn(
-    "create_date", F.date_format(F.current_timestamp(), "yyyyMMdd")
+df_source = (
+    df_source.select(*target_columns)
+    .dropDuplicates(BUSINESS_KEY)
+    .withColumn("create_date", F.date_format(F.current_timestamp(), "yyyyMMdd"))
 )
-
-# Deduplicate source on business key (keep first occurrence)
-df_source = df_source.dropDuplicates(BUSINESS_KEY)
 
 print(f"Source records (filtered & deduplicated): {df_source.count()}")
 
