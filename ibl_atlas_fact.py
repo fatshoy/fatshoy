@@ -97,8 +97,14 @@ WITH base AS (
         SELECT DISTINCT subsector_legacy_id, subsector_short_name
         FROM cdl_fps_prod.silver_master_data.mgmt_product_dim
     ) s ON ns.SubSector = s.subsector_legacy_id
-    LEFT JOIN spl_hier_dap spl
-        ON ns.SpendPool_Low = spl.spend_pool_low_code
+    LEFT JOIN (
+        SELECT DISTINCT
+            spend_pool_low_code,
+            spend_pool_low_name,
+            spend_pool_medium_name AS spend_pool_med_name,
+            spend_pool_high_name
+        FROM spl_hier_dap
+    ) spl ON ns.SpendPool_Low = spl.spend_pool_low_code
     LEFT JOIN pp_fps_prod.inbound_supply_chain_shares.netsavings_prod_bronze_projectclassification pc
         ON ns.ProjectClassification = pc.idx
     LEFT JOIN pp_fps_prod.inbound_supply_chain_shares.netsavings_prod_bronze_procurementhandling ph
@@ -146,7 +152,7 @@ SELECT
     ProjectName                                                  AS project_name,
     CAST(totalsavings AS decimal(18,6))                          AS project_val,
     ta_cur,
-    CAST(ta_cur * (Probability / 100) AS decimal(18,6))          AS tapa_cur,
+    CAST(ta_cur * (Probability / 100.0) AS decimal(18,6))        AS tapa_cur,
     CAST(totalsavings - ta_cur      AS decimal(18,6))            AS carry_over,
     CAST(Probability               AS decimal(5,2))              AS probability,
     FiscalYear                                                   AS fiscal_year_short_text,
@@ -163,8 +169,8 @@ SELECT
     Feedstock                                                    AS commodity_name,
     ProjectNotes                                                 AS flex_field,
     ProjectNotes                                                 AS additional_notes,
-    TechnicalResourcesRequiredFlag                               AS technical_resources_required_flag,
-    OneTimeSavings                                               AS one_time_savings
+    CAST(TechnicalResourcesRequiredFlag AS string)               AS technical_resources_required_flag,
+    CAST(OneTimeSavings AS string)                               AS one_time_savings
 FROM base
 """
 
