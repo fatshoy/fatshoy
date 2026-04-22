@@ -73,17 +73,17 @@ WITH base AS (
         gc.LongDescription      AS gcas_longdesc,
         pd.common_name          AS buyer_common_name,
         -- Time-Adjusted Current:
-        --   diff = TotalNumberofMonths - MonthsinFiscalYear
-        --   if diff == 0 -> totalsavings
-        --   else -> (totalsavings / TotalNumberofMonths) * diff
-        -- Guarded against TotalNumberofMonths = 0 / NULL.
+        --   project_val is treated as an annual figure (fiscal year = 12 months,
+        --   ends June 30), so the per-month allocation is totalsavings / 12.
+        --   diff = TotalNumberofMonths - MonthsinFiscalYear (months outside
+        --   the starting fiscal year).
+        --     if diff == 0 -> totalsavings (project is fully inside one FY)
+        --     else -> (totalsavings / 12) * diff
         CAST(
             CASE
                 WHEN (ns.TotalNumberofMonths - ns.MonthsinFiscalYear) = 0
                     THEN ns.totalsavings
-                WHEN COALESCE(ns.TotalNumberofMonths, 0) = 0
-                    THEN NULL
-                ELSE (ns.totalsavings / ns.TotalNumberofMonths)
+                ELSE (ns.totalsavings / 12.0)
                      * (ns.TotalNumberofMonths - ns.MonthsinFiscalYear)
             END AS decimal(18,6)
         ) AS ta_cur
