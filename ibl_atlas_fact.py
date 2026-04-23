@@ -134,7 +134,7 @@ SELECT
     spend_pool_med_name,
     spend_pool_high_name,
     CASE
-        WHEN projectclassificationdescription = 'MLC'
+        WHEN projectclassificationdescription LIKE '%MLC%'
             THEN 'MLC Project Negotiation (F&A)'
         WHEN LOWER(ProjectName) RLIKE
              '(export|freight|transport|truck|storage|tank|import|duty|logistics|pallet|loading|mlc|container|railcar|barge|frt|ibl|isotainer|unloading|isotank)'
