@@ -5,15 +5,20 @@
 # MAGIC %md
 # MAGIC # Delta Planning Parameters
 # MAGIC
-# MAGIC This notebook captures the initial MRP planning parameters (PDT, firm/trade-off zones, GR processing days, lot size, rounding value) for each plant-material combination at the moment it first appears in the source system, and preserves those baseline values for ongoing comparison with actual planning behavior.
+# MAGIC This notebook captures the initial MRP planning parameters (PDT, firm/trade-off zones, GR processing days, lot size, rounding value) for each plant-material combination at the moment it first appears **and is active in the planning parameter fact table**, preserving baseline values for ongoing comparison with actual planning behavior.
 # MAGIC
 # MAGIC Loads planning parameters from `plant_material_dim` into `mm_init_planning_parameter_dim`.
 # MAGIC - **First run**: full load (creates target table if not exists)
 # MAGIC - **Ongoing runs**: INSERT only new combinations (LEFT ANTI JOIN on business key)
 # MAGIC
-# MAGIC **Strategy**: Only the first appearance of a business key is kept.
-# MAGIC Parameters may change in source, but we intentionally preserve the initial values.
+# MAGIC **Strategy**: Only the first appearance of a business key is kept, and only when the
+# MAGIC `source_system_code + plant_code + material_id` combination exists in `planning_parameter_fact`
+# MAGIC (i.e. the plant-material combination is active from a planning perspective).
 # MAGIC Runs daily on both dev and prod.
+# MAGIC
+# MAGIC **Deployment note**: On first run after this logic change the temp table is wiped so that
+# MAGIC all existing rows (captured under the old logic) are discarded and re-captured under the
+# MAGIC new filter.
 
 # COMMAND ----------
 
@@ -26,6 +31,9 @@
 
 # Source table (fully qualified)
 SOURCE_TABLE = "app_fps_prod.inbound_supply_chain_shares.plant_material_dim"
+
+# Planning parameter fact — used to filter only active plant-material combinations
+PPF_PATH = "/mnt/mda-pipeline-refined/planning_parameter_fact"
 
 # Target table name (used by saveTable/saveTabletemp)
 TARGET_TABLE_NAME = "mm_init_planning_parameter_dim"
@@ -54,15 +62,45 @@ BUSINESS_KEY = ["source_system_code", "site_code", "material_id"]
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Step 0: Clear existing data to restart with updated logic
+# MAGIC
+# MAGIC The filter criteria changed (active combinations only via `planning_parameter_fact`),
+# MAGIC so previously captured rows are invalid. Wiping the temp table forces an initial load.
+
+# COMMAND ----------
+
+try:
+    dbutils.fs.rm(TEMP_PATH, recurse=True)
+    print(f"Temp table cleared: {TEMP_PATH}")
+except Exception:
+    print("Temp table did not exist — nothing to clear.")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Step 1: Read source data
 
 # COMMAND ----------
 
 from pyspark.sql import functions as F
 
-df_source = spark.read.table(SOURCE_TABLE).filter(
-    (F.col("source_system_code").isin(SOURCE_SYSTEM_CODES))
-    & (F.length(F.col("material_id")) == 18)
+# Active plant-material combinations from the planning parameter fact table
+df_ppf = (
+    spark.read.parquet(PPF_PATH)
+    .select("source_system_code", "plant_code", "material_id")
+    .distinct()
+)
+
+# Read plant_material_dim, apply box filter and length filter, then restrict to
+# combinations that are active in planning_parameter_fact (INNER JOIN).
+# The join uses pre-rename column names (plant_code) so it runs before COLUMN_MAPPING.
+df_source = (
+    spark.read.table(SOURCE_TABLE)
+    .filter(
+        (F.col("source_system_code").isin(SOURCE_SYSTEM_CODES))
+        & (F.length(F.col("material_id")) == 18)
+    )
+    .join(df_ppf, on=["source_system_code", "plant_code", "material_id"], how="inner")
 )
 
 # Apply column mapping (rename source columns to target names)
