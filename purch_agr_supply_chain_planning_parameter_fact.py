@@ -19,6 +19,9 @@
 # MAGIC When the same `(material_id, site_code, case_id_format)` exists in puma with both a
 # MAGIC NULL/blank `vendor_id` and a populated one, the NULL/blank entry is dropped.
 # MAGIC
+# MAGIC `case_id_format` is computed only for joining/dedup (strips the `-V<n>` suffix);
+# MAGIC the surviving row's original `case_id` (e.g. `PAPAC-031215-V1`) is what reaches the output.
+# MAGIC
 # MAGIC ### slea pre-deduplication
 # MAGIC slea contains rows that are content-identical but differ by `vendor_source` (SEP vs MEP).
 # MAGIC A `ROW_NUMBER` keyed on `(material_id, site_code, puma_case_id, vendor_id)` collapses
@@ -38,7 +41,7 @@ SOURCE_TABLE_SLEA = "sbm.slea_supply_chain_param_config_recom_fact"  # TODO: upd
 TARGET_TABLE_NAME = "purch_agr_supply_chain_planning_parameter_fact"
 TARGET_PATH       = "/mnt/mda-pipeline-refined/purch_agr_supply_chain_planning_parameter_fact"
 
-BUSINESS_KEY = ["material_id", "site_code", "case_id_format"]
+BUSINESS_KEY = ["material_id", "site_code", "case_id"]
 
 # COMMAND ----------
 
@@ -87,6 +90,7 @@ puma_base AS (
     SELECT
         mapped_source_system_code,
         agreement_naturalkey                     AS agreement_natural_key,
+        case_id,
         regexp_replace(case_id, '-V[0-9]+$', '') AS case_id_format,
         case_status,
         parent_case_flag,
@@ -119,7 +123,7 @@ puma_base AS (
 SELECT
     p.mapped_source_system_code,
     p.agreement_natural_key,
-    p.case_id_format,
+    p.case_id,
     p.case_status,
     p.material_id,
     p.site_code,
