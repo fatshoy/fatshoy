@@ -34,7 +34,7 @@
 # COMMAND ----------
 
 SOURCE_TABLE_PUMA = "rpm.puma_purch_agr_case_fact"
-SOURCE_TABLE_SLEA = "sbm.slea_supply_chain_param_config_recom_fact"
+SOURCE_TABLE_SLEA = "sbm.slea_supply_chain_param_config_recom_fact"  # TODO: update to new source table
 TARGET_TABLE_NAME = "purch_agr_supply_chain_planning_parameter_fact"
 TARGET_PATH       = "/mnt/mda-pipeline-refined/purch_agr_supply_chain_planning_parameter_fact"
 
@@ -49,8 +49,8 @@ BUSINESS_KEY = ["material_id", "site_code", "case_id_format"]
 
 SQL = f"""
 WITH slea_dedup AS (
-    -- Collapse SEP/MEP duplicates: content of all target columns is identical across
-    -- vendor_source values; ORDER BY vendor_source gives a deterministic tiebreaker.
+    -- Deduplicate slea by business key: content of all target columns is identical
+    -- across duplicate rows; ORDER BY slea_ticket_id gives a deterministic tiebreaker.
     -- slea_reco_planned_deliv_time is a SQL translation of the DAX formula:
     --   COALESCE applied to every addend to replicate DAX BLANK-as-zero arithmetic.
     SELECT
@@ -80,7 +80,7 @@ WITH slea_dedup AS (
     FROM {SOURCE_TABLE_SLEA}
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY material_id, site_code, puma_case_id, vendor_id
-        ORDER BY vendor_source
+        ORDER BY slea_ticket_id NULLS LAST
     ) = 1
 ),
 puma_base AS (
