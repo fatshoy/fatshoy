@@ -10,10 +10,10 @@
 # MAGIC - **Right**: `sbm.slea_supply_chain_param_config_recom_fact`
 # MAGIC
 # MAGIC ### Join strategy (driven by `parent_case_flag`)
-# MAGIC | `parent_case_flag` | Join keys |
+# MAGIC | `parent_case_flag` (string) | Join keys |
 # MAGIC |---|---|
-# MAGIC | `1` — parent case (vendor is NULL) | `material_id + site_code + case_id_format` |
-# MAGIC | `0` — child case (vendor populated) | `vendor_id + material_id + site_code + case_id_format` |
+# MAGIC | `'1'` — parent case (vendor is NULL) | `material_id + site_code + case_id_format` |
+# MAGIC | `'0'` — child case (vendor populated) | `vendor_id + material_id + site_code + case_id_format` |
 # MAGIC
 # MAGIC ### Post-join deduplication
 # MAGIC When the same `(material_id, site_code, case_id_format)` exists in puma with both a
@@ -86,7 +86,7 @@ WITH slea_dedup AS (
 puma_base AS (
     SELECT
         mapped_source_system_code,
-        agreement_natural_key,
+        agreement_naturalkey                     AS agreement_natural_key,
         regexp_replace(case_id, '-V[0-9]+$', '') AS case_id_format,
         case_status,
         parent_case_flag,
@@ -94,7 +94,7 @@ puma_base AS (
         site_code,
         vendor_id,
         scenario,
-        vol_num_format,
+        vol                                      AS vol_num_format,
         artwork_project_type,
         mep_sep_list,
         purch_doc_num,
@@ -109,7 +109,7 @@ puma_base AS (
         create_date,
         update_date,
         work_days_overdue,
-        off_track_Reason,
+        off_track_reason,
         comments,
         psm_owner_email,
         ess_type,
@@ -140,7 +140,7 @@ SELECT
     p.create_date,
     p.update_date,
     p.work_days_overdue,
-    p.off_track_Reason,
+    p.off_track_reason,
     p.comments,
     p.psm_owner_email,
     p.ess_type,
@@ -161,8 +161,8 @@ LEFT JOIN slea_dedup s
     AND s.site_code    = p.site_code
     AND s.puma_case_id = p.case_id_format
     AND (
-        p.parent_case_flag = 1
-        OR (p.parent_case_flag = 0 AND p.vendor_id = s.vendor_id)
+        p.parent_case_flag = '1'
+        OR (p.parent_case_flag = '0' AND p.vendor_id = s.vendor_id)
     )
 QUALIFY ROW_NUMBER() OVER (
     PARTITION BY p.material_id, p.site_code, p.case_id_format
