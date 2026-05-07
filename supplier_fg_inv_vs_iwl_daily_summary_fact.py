@@ -222,20 +222,18 @@ if new_count > 0:
         # First run — write the full 3-month window to temp.
         saveTabletemp(TARGET_TABLE_NAME, "delta", "overwrite", df_to_save)
     else:
-        # Replace only the backfill partitions in temp.
-        try:
-            (
-                df_to_save.write
-                .format("delta")
-                .partitionBy(PARTITION_COL)
-                .option("replaceWhere", f"{PARTITION_COL} >= '{backfill_start}'")
-                .mode("overwrite")
-                .save(TEMP_PATH)
-            )
-            print(f"Temp Delta written (replaceWhere >= {backfill_start})")
-        except Exception as e:
-            print(f"replaceWhere failed ({e}), falling back to saveTabletemp append")
-            saveTabletemp(TARGET_TABLE_NAME, "delta", "append", df_to_save)
+        # Replace only the backfill date range in temp.
+        # replaceWhere uses a data predicate — no partitionBy needed and it must
+        # not be set here because the table schema (partitioning) was fixed at
+        # initial-load time by saveTabletemp; adding partitionBy would conflict.
+        (
+            df_to_save.write
+            .format("delta")
+            .option("replaceWhere", f"{PARTITION_COL} >= '{backfill_start}'")
+            .mode("overwrite")
+            .save(TEMP_PATH)
+        )
+        print(f"Temp Delta written (replaceWhere >= {backfill_start})")
 else:
     print("No new records — skipping temp write")
 
