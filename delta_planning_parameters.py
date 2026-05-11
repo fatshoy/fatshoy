@@ -5,7 +5,7 @@
 # MAGIC ---
 # MAGIC
 # MAGIC #### Business Context
-# MAGIC Captures initial MRP planning parameters (PDT, firm/trade-off zones, GR processing days, lot size, rounding value) for each plant-material combination at the moment it first appears **and is active in the planning parameter fact**, preserving baseline values for comparison.
+# MAGIC Captures initial MRP planning parameters (PDT, firm/trade-off zones, GR processing days, lot size, rounding value) for each plant-material combination at the moment it first appears in `plant_material_dim` **and is active in `planning_parameter_fact`**, preserving baseline values for comparison.
 # MAGIC
 # MAGIC ---
 # MAGIC
@@ -17,12 +17,15 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC #### Filters
+# MAGIC #### Additional Notes
+# MAGIC
+# MAGIC **Filters:**
 # MAGIC - source_system_code IN box_filter
 # MAGIC - length(material_id) == 18
-# MAGIC - source_system_code + plant_code + material_id must exist in planning_parameter_fact
+# MAGIC - source_system_code + plant_code + material_id must exist in planning_parameter_fact (active combinations only)
 # MAGIC
-# MAGIC #### Logic
+# MAGIC **Logic & Calculations:**
+# MAGIC - Column mapping: planned_delivery_time_in_days -> pdt_days, locked_zone_code -> firm_zone_code, etc.
 # MAGIC - Delta load: LEFT_ANTI JOIN for new records only (append); initial load uses overwrite
 # MAGIC - Primary Key: source_system_code, site_code, material_id
 
