@@ -201,13 +201,7 @@ print(f"Rows to write: {new_count}")
 
 if new_count > 0:
     if is_initial_load:
-        (
-            df_to_save.write
-            .format("delta")
-            .partitionBy(PARTITION_COL)
-            .mode("overwrite")
-            .save(TEMP_PATH)
-        )
+        saveTabletemp(TARGET_TABLE_NAME, "delta", "overwrite", df_to_save, PARTITION_COL)
         print(f"Temp Delta written (initial, partitioned by {PARTITION_COL})")
     else:
         (
@@ -274,9 +268,8 @@ print(f"DQ result: {result}")
 # COMMAND ----------
 
 if result == "Success":
-    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
     df_temp = spark.sql(f"SELECT * FROM delta.`{TEMP_PATH}`")
-    saveTable(TARGET_TABLE_NAME, "parquet", "overwrite", df_temp)
+    saveTable(TARGET_TABLE_NAME, "parquet", "overwrite", df_temp, PARTITION_COL)
     print(f"SA write complete — total rows: {df_temp.count()}")
 else:
     raise Exception(f"DQ check failed for {TARGET_TABLE_NAME} — SA write skipped")
