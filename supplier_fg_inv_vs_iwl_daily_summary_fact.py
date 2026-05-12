@@ -51,7 +51,7 @@ PARTITION_COL = "snapshot_date"
 
 cutoff_date    = spark.sql(f"SELECT add_months(current_date(), -{LOOKBACK_MONTHS})").first()[0]
 backfill_start = spark.sql(f"SELECT date_sub(current_date(), {BACKFILL_DAYS - 1})").first()[0]
-cutoff_int     = int(cutoff_date.strftime("%Y%m%d"))
+cutoff_yyyymmdd = cutoff_date.strftime("%Y%m%d")
 
 print(f"cutoff_date    = {cutoff_date}")
 print(f"backfill_start = {backfill_start}")
@@ -103,7 +103,7 @@ fg AS (
         SUM(quantity) AS quantity_ivy
     FROM {FG_SOURCE_TABLE}
     WHERE stock_type_desc IN ('Inventory On-Ground', 'Inventory In-Transit')
-      AND snapshot_date > {cutoff_int}
+      AND snapshot_date > '{cutoff_yyyymmdd}'
     GROUP BY
         purchase_vendor_id,
         material_id,
