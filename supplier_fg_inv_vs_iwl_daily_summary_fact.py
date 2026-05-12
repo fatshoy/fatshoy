@@ -201,7 +201,14 @@ print(f"Rows to write: {new_count}")
 
 if new_count > 0:
     if is_initial_load:
-        saveTabletemp(TARGET_TABLE_NAME, "delta", "overwrite", df_to_save)
+        (
+            df_to_save.write
+            .format("delta")
+            .partitionBy(PARTITION_COL)
+            .mode("overwrite")
+            .save(TEMP_PATH)
+        )
+        print(f"Temp Delta written (initial, partitioned by {PARTITION_COL})")
     else:
         (
             df_to_save.write
