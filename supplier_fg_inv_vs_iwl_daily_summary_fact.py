@@ -9,17 +9,21 @@
 # MAGIC into a partitioned Delta / Parquet fact table consumed by the RPMA AAS model.
 # MAGIC
 # MAGIC **Sources**
-# MAGIC - `supplier_fg_inventory_fact` — finished-goods inventory snapshots
-# MAGIC - `iwl_daily_fact` — in-warehouse-location daily stock
+# MAGIC - `supplier_fg_inventory_fact` — finished-goods inventory snapshots (snapshot_date is INT yyyyMMdd)
+# MAGIC - `iwl_daily_fact` — in-warehouse-location daily stock (calendar_date is DATE)
 # MAGIC
 # MAGIC **Target**: `rpm.supplier_fg_inv_vs_iwl_daily_summary_fact`
 # MAGIC
 # MAGIC **Schedule**: every 2 hours
 # MAGIC
 # MAGIC **Strategy**
-# MAGIC - First run → full load of the last 3 months
-# MAGIC - Subsequent runs → recompute the last `BACKFILL_DAYS` snapshot dates and replaceWhere
-# MAGIC - Sliding 3-month retention prune on temp Delta
+# MAGIC - First run → full load of the last `LOOKBACK_MONTHS` months
+# MAGIC - Subsequent runs → recompute only snapshot dates >= `backfill_start` and replaceWhere
+# MAGIC - Sliding `LOOKBACK_MONTHS`-month retention prune on temp Delta
+# MAGIC
+# MAGIC **Parameters (widgets)**
+# MAGIC - `cutoff_date` — lower bound for data window (exclusive). Empty = auto = today − LOOKBACK_MONTHS months.
+# MAGIC - `backfill_start` — first date to recompute in delta load (inclusive). Empty = auto = today − (BACKFILL_DAYS − 1) days.
 
 # COMMAND ----------
 
@@ -29,6 +33,7 @@
 # COMMAND ----------
 
 from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 
 # ---------------------------------------------------------------------------
 # Source tables  (replace placeholders with fully-qualified catalog.schema.table)
@@ -63,14 +68,43 @@ BUSINESS_KEY = [
 
 PARTITION_COL = "snapshot_date"
 
-# ---------------------------------------------------------------------------
-# Date boundaries (computed once per run, injected into SQL as literals)
-# ---------------------------------------------------------------------------
-today          = date.today()
-cutoff_date    = today - timedelta(days=LOOKBACK_MONTHS * 30)
-backfill_start = today - timedelta(days=BACKFILL_DAYS - 1)
+# COMMAND ----------
 
-# Make Python params visible to the %sql cells through SparkContext properties.
+# MAGIC %md
+# MAGIC ## Parameters (Databricks widgets)
+# MAGIC
+# MAGIC Both widgets accept `YYYY-MM-DD` strings or empty for auto-calculation.
+# MAGIC - `cutoff_date` is **exclusive** in the data SQL (`snapshot_date > cutoff_date`) to match ASDW semantics
+# MAGIC   (T-SQL `DATEADD(MONTH,-3,GETDATE())` produced a timestamp that always excluded the boundary day).
+# MAGIC - `backfill_start` is **inclusive** in the delta-load filter (`snapshot_date >= backfill_start`).
+
+# COMMAND ----------
+
+dbutils.widgets.text("cutoff_date",    "", "Cutoff date (YYYY-MM-DD); empty = auto")
+dbutils.widgets.text("backfill_start", "", "Backfill start (YYYY-MM-DD); empty = auto")
+
+today = date.today()
+
+_cutoff_param = dbutils.widgets.get("cutoff_date").strip()
+cutoff_date   = date.fromisoformat(_cutoff_param) if _cutoff_param \
+                else today - relativedelta(months=LOOKBACK_MONTHS)
+
+_backfill_param = dbutils.widgets.get("backfill_start").strip()
+backfill_start  = date.fromisoformat(_backfill_param) if _backfill_param \
+                  else today - timedelta(days=BACKFILL_DAYS - 1)
+
+if backfill_start <= cutoff_date:
+    raise ValueError(
+        f"backfill_start ({backfill_start}) must be > cutoff_date ({cutoff_date})"
+    )
+
+# yyyyMMdd-INT form of cutoff for partition pruning on the FG source.
+cutoff_int = int(cutoff_date.strftime("%Y%m%d"))
+
+print(f"cutoff_date    = {cutoff_date}  (data window: snapshot_date > {cutoff_date})")
+print(f"backfill_start = {backfill_start}  (delta load: snapshot_date >= {backfill_start})")
+print(f"cutoff_int     = {cutoff_int}  (used for FG partition pruning)")
+
 spark.conf.set("dl.fg_source_table",  FG_SOURCE_TABLE)
 spark.conf.set("dl.iwl_source_table", IWL_SOURCE_TABLE)
 spark.conf.set("dl.cutoff_date",      str(cutoff_date))
@@ -96,10 +130,12 @@ def path_has_data(path: str) -> bool:
 # MAGIC %md
 # MAGIC ## Step 1: Build the result via Spark SQL
 # MAGIC
-# MAGIC Single SQL statement that mirrors the original view, with two important changes:
+# MAGIC Optimisations vs. legacy view:
 # MAGIC 1. `BROADCAST(fg_suppliers)` hint — the distinct-key supplier table is small.
-# MAGIC 2. `WHERE snapshot_date >= cutoff_date` is pushed into both source CTEs so the
-# MAGIC    optimiser can prune source partitions.
+# MAGIC 2. `LEFT SEMI JOIN fg_suppliers` instead of `INNER JOIN` — same filter semantics, no row duplication.
+# MAGIC 3. FG `WHERE` uses raw `snapshot_date > <INT>` so Spark can prune source partitions
+# MAGIC    (partition pruning requires comparison on the raw column, not on `to_date(...)`).
+# MAGIC 4. Strict `>` on cutoff to exclude the boundary day, matching ASDW T-SQL semantics.
 
 # COMMAND ----------
 
@@ -116,18 +152,18 @@ fg AS (
         purchase_vendor_id,
         material_id,
         plant_code,
-        CAST(snapshot_date AS DATE) AS snapshot_date,
+        to_date(CAST(snapshot_date AS STRING), 'yyyyMMdd') AS snapshot_date,
         stock_type_desc,
         business_unit_lkp_code,
         SUM(quantity) AS quantity_ivy
     FROM {FG_SOURCE_TABLE}
     WHERE stock_type_desc IN ('Inventory On-Ground', 'Inventory In-Transit')
-      AND snapshot_date >= DATE '{cutoff_date}'
+      AND snapshot_date > {cutoff_int}
     GROUP BY
         purchase_vendor_id,
         material_id,
         plant_code,
-        CAST(snapshot_date AS DATE),
+        to_date(CAST(snapshot_date AS STRING), 'yyyyMMdd'),
         stock_type_desc,
         business_unit_lkp_code
     HAVING SUM(quantity) > 0
@@ -142,7 +178,7 @@ iwl AS (
         SUM(buom_total_plant_stock) AS quantity_iwl
     FROM {IWL_SOURCE_TABLE}
     WHERE purchase_vendor_id IS NOT NULL
-      AND calendar_date >= DATE '{cutoff_date}'
+      AND calendar_date > DATE '{cutoff_date}'
     GROUP BY
         purchase_vendor_id,
         material,
@@ -152,9 +188,6 @@ iwl AS (
     HAVING SUM(buom_total_plant_stock) > 0
 ),
 iwl_filtered AS (
-    -- Keep only IWL rows whose (vendor, plant, BU) exists in FG.
-    -- LEFT SEMI is the natural form of the original `fg_suppliers INNER JOIN iwl`,
-    -- and BROADCAST avoids a shuffle since fg_suppliers is small.
     SELECT /*+ BROADCAST(fg_suppliers) */ iwl.*
     FROM iwl
     LEFT SEMI JOIN fg_suppliers
@@ -190,13 +223,17 @@ print(f"Result rows (full window): {spark.sql('SELECT COUNT(*) FROM v_result').c
 
 # MAGIC %md
 # MAGIC ## Step 2: Determine load type and build delta
+# MAGIC
+# MAGIC - **Initial load**: temp path empty → write the whole window.
+# MAGIC - **Delta load**: temp path has data → recompute only `snapshot_date >= backfill_start`
+# MAGIC   so we touch only the partitions that actually changed.
 
 # COMMAND ----------
 
 is_initial_load = not path_has_data(TEMP_PATH)
 
 if is_initial_load:
-    print("INITIAL LOAD — writing all 3-month data to temp")
+    print(f"INITIAL LOAD — writing full window ({cutoff_date} < snapshot_date) to temp")
     df_to_save = spark.sql("SELECT * FROM v_result")
 else:
     print(f"DELTA LOAD — recomputing snapshot dates >= {backfill_start}")
@@ -213,19 +250,14 @@ print(f"Rows to write: {new_count}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Save to temp (Delta, partition overwrite)
+# MAGIC ## Step 3: Save to temp (Delta, replaceWhere on backfill range)
 
 # COMMAND ----------
 
 if new_count > 0:
     if is_initial_load:
-        # First run — write the full 3-month window to temp.
         saveTabletemp(TARGET_TABLE_NAME, "delta", "overwrite", df_to_save)
     else:
-        # Replace only the backfill date range in temp.
-        # replaceWhere uses a data predicate — no partitionBy needed and it must
-        # not be set here because the table schema (partitioning) was fixed at
-        # initial-load time by saveTabletemp; adding partitionBy would conflict.
         (
             df_to_save.write
             .format("delta")
@@ -233,23 +265,26 @@ if new_count > 0:
             .mode("overwrite")
             .save(TEMP_PATH)
         )
-        print(f"Temp Delta written (replaceWhere >= {backfill_start})")
+        print(f"Temp Delta written (replaceWhere {PARTITION_COL} >= '{backfill_start}')")
 else:
     print("No new records — skipping temp write")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 4: Sliding 3-month retention
+# MAGIC ## Step 4: Sliding retention — drop partitions outside the window
+# MAGIC
+# MAGIC The data SQL keeps `snapshot_date > cutoff_date`, so anything `<= cutoff_date`
+# MAGIC in temp is stale and can be removed.
 
 # COMMAND ----------
 
 if path_has_data(TEMP_PATH):
     spark.sql(f"""
         DELETE FROM delta.`{TEMP_PATH}`
-        WHERE {PARTITION_COL} < DATE '{cutoff_date}'
+        WHERE {PARTITION_COL} <= DATE '{cutoff_date}'
     """)
-    print(f"Retention prune complete (cutoff: {cutoff_date})")
+    print(f"Retention prune complete (kept: snapshot_date > {cutoff_date})")
 
 # COMMAND ----------
 
