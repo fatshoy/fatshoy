@@ -20,10 +20,6 @@
 # MAGIC - First run → full load of the last `LOOKBACK_MONTHS` months
 # MAGIC - Subsequent runs → recompute only snapshot dates >= `backfill_start` and replaceWhere
 # MAGIC - Sliding `LOOKBACK_MONTHS`-month retention prune on temp Delta
-# MAGIC
-# MAGIC **Parameters (widgets)**
-# MAGIC - `cutoff_date` — lower bound for data window (exclusive). Empty = auto = today − LOOKBACK_MONTHS months.
-# MAGIC - `backfill_start` — first date to recompute in delta load (inclusive). Empty = auto = today − (BACKFILL_DAYS − 1) days.
 
 # COMMAND ----------
 
@@ -32,31 +28,16 @@
 
 # COMMAND ----------
 
-from datetime import date, timedelta
-from dateutil.relativedelta import relativedelta
-
-# ---------------------------------------------------------------------------
-# Source tables  (replace placeholders with fully-qualified catalog.schema.table)
-# ---------------------------------------------------------------------------
 FG_SOURCE_TABLE  = "<catalog>.<schema>.supplier_fg_inventory_fact"   # PLACEHOLDER
 IWL_SOURCE_TABLE = "<catalog>.<schema>.iwl_daily_fact"               # PLACEHOLDER
 
-# ---------------------------------------------------------------------------
-# Target
-# ---------------------------------------------------------------------------
 TARGET_TABLE_NAME = "supplier_fg_inv_vs_iwl_daily_summary_fact"
 TARGET_PATH       = "/mnt/mda-pipeline-refined/supplier_fg_inv_vs_iwl_daily_summary_fact"
 TEMP_PATH         = "/mnt/mda-pipeline-temp/supplier_fg_inv_vs_iwl_daily_summary_fact"
 
-# ---------------------------------------------------------------------------
-# Window / retention
-# ---------------------------------------------------------------------------
 LOOKBACK_MONTHS = 3
 BACKFILL_DAYS   = 2
 
-# ---------------------------------------------------------------------------
-# Business key (used for DQ uniqueness check)
-# ---------------------------------------------------------------------------
 BUSINESS_KEY = [
     "snapshot_date",
     "purchase_vendor_id",
@@ -68,48 +49,12 @@ BUSINESS_KEY = [
 
 PARTITION_COL = "snapshot_date"
 
-# COMMAND ----------
+cutoff_date    = spark.sql(f"SELECT add_months(current_date(), -{LOOKBACK_MONTHS})").first()[0]
+backfill_start = spark.sql(f"SELECT date_sub(current_date(), {BACKFILL_DAYS - 1})").first()[0]
+cutoff_int     = int(cutoff_date.strftime("%Y%m%d"))
 
-# MAGIC %md
-# MAGIC ## Parameters (Databricks widgets)
-# MAGIC
-# MAGIC Both widgets accept `YYYY-MM-DD` strings or empty for auto-calculation.
-# MAGIC - `cutoff_date` is **exclusive** in the data SQL (`snapshot_date > cutoff_date`) to match ASDW semantics
-# MAGIC   (T-SQL `DATEADD(MONTH,-3,GETDATE())` produced a timestamp that always excluded the boundary day).
-# MAGIC - `backfill_start` is **inclusive** in the delta-load filter (`snapshot_date >= backfill_start`).
-
-# COMMAND ----------
-
-dbutils.widgets.text("cutoff_date",    "", "Cutoff date (YYYY-MM-DD); empty = auto")
-dbutils.widgets.text("backfill_start", "", "Backfill start (YYYY-MM-DD); empty = auto")
-
-today = date.today()
-
-_cutoff_param = dbutils.widgets.get("cutoff_date").strip()
-cutoff_date   = date.fromisoformat(_cutoff_param) if _cutoff_param \
-                else today - relativedelta(months=LOOKBACK_MONTHS)
-
-_backfill_param = dbutils.widgets.get("backfill_start").strip()
-backfill_start  = date.fromisoformat(_backfill_param) if _backfill_param \
-                  else today - timedelta(days=BACKFILL_DAYS - 1)
-
-if backfill_start <= cutoff_date:
-    raise ValueError(
-        f"backfill_start ({backfill_start}) must be > cutoff_date ({cutoff_date})"
-    )
-
-# yyyyMMdd-INT form of cutoff for partition pruning on the FG source.
-cutoff_int = int(cutoff_date.strftime("%Y%m%d"))
-
-print(f"cutoff_date    = {cutoff_date}  (data window: snapshot_date > {cutoff_date})")
-print(f"backfill_start = {backfill_start}  (delta load: snapshot_date >= {backfill_start})")
-print(f"cutoff_int     = {cutoff_int}  (used for FG partition pruning)")
-
-spark.conf.set("dl.fg_source_table",  FG_SOURCE_TABLE)
-spark.conf.set("dl.iwl_source_table", IWL_SOURCE_TABLE)
-spark.conf.set("dl.cutoff_date",      str(cutoff_date))
-spark.conf.set("dl.backfill_start",   str(backfill_start))
-spark.conf.set("dl.temp_path",        TEMP_PATH)
+print(f"cutoff_date    = {cutoff_date}")
+print(f"backfill_start = {backfill_start}")
 
 # COMMAND ----------
 
