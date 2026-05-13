@@ -148,8 +148,7 @@ SELECT
     COALESCE(fg.business_unit_lkp_code, iwl_filtered.business_unit_lkp_code) AS business_unit_lkp_code,
     fg.stock_type_desc,
     fg.quantity_ivy,
-    iwl_filtered.quantity_iwl,
-    current_timestamp() AS etl_load_ts
+    iwl_filtered.quantity_iwl
 FROM fg
 FULL OUTER JOIN iwl_filtered
   ON fg.purchase_vendor_id     = iwl_filtered.purchase_vendor_id
@@ -250,8 +249,7 @@ df_temp_dq = spark.sql(f"""
         business_unit_lkp_code,
         COALESCE(stock_type_desc, '__IWL_ONLY__') AS stock_type_desc,
         quantity_ivy,
-        quantity_iwl,
-        etl_load_ts
+        quantity_iwl
     FROM delta.`{TEMP_PATH}`
 """)
 
