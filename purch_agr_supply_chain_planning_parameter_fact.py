@@ -61,8 +61,6 @@ SQL = f"""
 WITH slea_dedup AS (
     -- Deduplicate slea by business key: content of all target columns is identical
     -- across duplicate rows; ORDER BY slea_ticket_id gives a deterministic tiebreaker.
-    -- slea_reco_planned_deliv_time is a SQL translation of the DAX formula:
-    --   COALESCE applied to every addend to replicate DAX BLANK-as-zero arithmetic.
     SELECT
         material_id,
         site_code,
@@ -77,18 +75,18 @@ WITH slea_dedup AS (
         slea_material_origin_id_desc,
         calc_loading_efficiency,
         concat_email_vendor,
-        -- Blank in any of the 6 core fields propagates NULL to the whole PDT.
-        -- goods_inventory_days is deliberately treated as 0 when blank (not a delivery step).
+        -- Blank in any field propagates NULL to the whole PDT (0 is kept only when stored as 0).
+        -- CASE guard needed because Spark LEAST() skips NULLs instead of propagating them.
         (slea_order_process_days
          + slea_transport_planning_days
          + slea_cover_unavailable_ship_days
          + slea_transit_days
          + slea_supplier_mps_zone_days
          + slea_customs_clearance_days)
-        - LEAST(
-            COALESCE(slea_supplier_goods_inventory_days, 0),
-            COALESCE(slea_supplier_mps_zone_days,        0)
-          )                                           AS slea_reco_planned_deliv_time
+        - CASE
+            WHEN slea_supplier_goods_inventory_days IS NULL THEN NULL
+            ELSE LEAST(slea_supplier_goods_inventory_days, slea_supplier_mps_zone_days)
+          END                                         AS slea_reco_planned_deliv_time
     FROM {SOURCE_TABLE_SLEA}
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY material_id, site_code, puma_case_id, vendor_id
