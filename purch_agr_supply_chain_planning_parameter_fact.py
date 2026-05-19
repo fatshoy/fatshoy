@@ -16,11 +16,18 @@
 # MAGIC | `'0'` — child case (vendor populated) | `vendor_id + material_id + site_code + case_id_format` |
 # MAGIC
 # MAGIC ### Post-join deduplication
-# MAGIC When the same `(material_id, site_code, case_id_format)` exists in puma with both a
-# MAGIC NULL/blank `vendor_id` and a populated one, the NULL/blank entry is dropped.
+# MAGIC Dedup key: `(material_id, site_code, case_id_format, slea.vendor_id)`.
+# MAGIC When the same slea vendor is reachable via both a parent-case path (puma vendor NULL)
+# MAGIC and a child-case path (puma vendor populated), the child-case row wins.
+# MAGIC Distinct slea vendors for the same case are kept as separate output rows.
 # MAGIC
 # MAGIC `case_id_format` is computed only for joining/dedup (strips the `-V<n>` suffix);
 # MAGIC the surviving row's original `case_id` (e.g. `PAPAC-031215-V1`) is what reaches the output.
+# MAGIC
+# MAGIC ### vendor_id in output
+# MAGIC For child cases (`parent_case_flag = '0'`) the puma `vendor_id` is used as-is.
+# MAGIC For parent cases (`parent_case_flag = '1'`) puma has no vendor; the slea `vendor_id` is
+# MAGIC used instead (`COALESCE(puma.vendor_id, slea.vendor_id)`).
 # MAGIC
 # MAGIC ### slea pre-deduplication
 # MAGIC slea contains rows that are content-identical but differ by `vendor_source` (SEP vs MEP).
@@ -41,7 +48,7 @@ SOURCE_TABLE_SLEA = "sbm.slea_supply_chain_param_config_recom_fact"  # TODO: upd
 TARGET_TABLE_NAME = "purch_agr_supply_chain_planning_parameter_fact"
 TARGET_PATH       = "/mnt/mda-pipeline-refined/purch_agr_supply_chain_planning_parameter_fact"
 
-BUSINESS_KEY = ["material_id", "site_code", "case_id"]
+BUSINESS_KEY = ["material_id", "site_code", "case_id", "vendor_id"]
 
 # COMMAND ----------
 
@@ -70,12 +77,14 @@ WITH slea_dedup AS (
         slea_material_origin_id_desc,
         calc_loading_efficiency,
         concat_email_vendor,
-        (COALESCE(slea_order_process_days,             0)
-         + COALESCE(slea_transport_planning_days,      0)
-         + COALESCE(slea_cover_unavailable_ship_days,  0)
-         + COALESCE(slea_transit_days,                 0)
-         + COALESCE(slea_supplier_mps_zone_days,       0)
-         + COALESCE(slea_customs_clearance_days,       0))
+        -- Blank in any of the 6 core fields propagates NULL to the whole PDT.
+        -- goods_inventory_days is deliberately treated as 0 when blank (not a delivery step).
+        (slea_order_process_days
+         + slea_transport_planning_days
+         + slea_cover_unavailable_ship_days
+         + slea_transit_days
+         + slea_supplier_mps_zone_days
+         + slea_customs_clearance_days)
         - LEAST(
             COALESCE(slea_supplier_goods_inventory_days, 0),
             COALESCE(slea_supplier_mps_zone_days,        0)
@@ -127,7 +136,7 @@ SELECT
     p.case_status,
     p.material_id,
     p.site_code,
-    p.vendor_id,
+    COALESCE(p.vendor_id, s.vendor_id) AS vendor_id,
     p.scenario,
     p.vol_num_format,
     p.artwork_project_type,
@@ -169,9 +178,11 @@ LEFT JOIN slea_dedup s
         OR (p.parent_case_flag = '0' AND p.vendor_id = s.vendor_id)
     )
 QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY p.material_id, p.site_code, p.case_id_format
+    -- One row per (case, slea-vendor): when the same slea vendor is reachable via both
+    -- a parent-case path and a child-case path, keep the child-case row.
+    PARTITION BY p.material_id, p.site_code, p.case_id_format, s.vendor_id
     ORDER BY
-        CASE WHEN p.vendor_id IS NULL OR TRIM(p.vendor_id) = '' THEN 1 ELSE 0 END
+        CASE WHEN p.parent_case_flag = '0' THEN 0 ELSE 1 END
 ) = 1
 """
 
