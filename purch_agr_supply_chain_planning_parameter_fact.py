@@ -29,6 +29,12 @@
 # MAGIC For parent cases (`parent_case_flag = '1'`) puma has no vendor; the slea `vendor_id` is
 # MAGIC used instead (`COALESCE(puma.vendor_id, slea.vendor_id)`).
 # MAGIC
+# MAGIC ### psm_owner_email fallback
+# MAGIC When puma's `psm_owner_email` is blank (NULL or empty), the slea `owner_email`
+# MAGIC from the matched row is used as fallback. The slea row is already matched on
+# MAGIC `(vendor_id, material_id, site_code, case_id_format)` by the main join, so no
+# MAGIC additional lookup is required.
+# MAGIC
 # MAGIC ### slea pre-deduplication
 # MAGIC slea contains rows that are content-identical but differ by `vendor_source` (SEP vs MEP).
 # MAGIC A `ROW_NUMBER` keyed on `(material_id, site_code, puma_case_id, vendor_id)` collapses
@@ -75,6 +81,7 @@ WITH slea_dedup AS (
         slea_material_origin_id_desc,
         calc_loading_efficiency,
         concat_email_vendor,
+        owner_email,
         -- Blank in any field propagates NULL to the whole PDT (0 is kept only when stored as 0).
         -- CASE guard needed because Spark LEAST() skips NULLs instead of propagating them.
         (slea_order_process_days
@@ -153,7 +160,7 @@ SELECT
     p.work_days_overdue,
     p.off_track_reason,
     p.comments,
-    p.psm_owner_email,
+    COALESCE(NULLIF(TRIM(p.psm_owner_email), ''), s.owner_email) AS psm_owner_email,
     p.ess_type,
     p.site_country_code,
     s.slea_reco_planned_deliv_time,
