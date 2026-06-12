@@ -16,8 +16,51 @@
 
 # COMMAND ----------
 
+import re
 from pyspark.sql import functions as F
 from pyspark.sql.types import DateType, TimestampType
+
+# inferPartitionDateFormat - Detect how a partition column stores its date value.
+#
+# Date / Timestamp columns are taken straight as 'yyyy-MM-dd'. For any other type
+# (string, int, ...) the column rarely advertises its layout, so we sample one
+# non-null value, cast it to string and match its shape against the common
+# partition layouts. The returned pattern is a date_format pattern, so the same
+# string used to render the cutoff also sorts chronologically as text -- which is
+# what the `>=` filter and `replaceWhere` below rely on.
+#
+# Returns the date_format pattern, or None if the column is empty / unrecognised.
+def inferPartitionDateFormat(df, partitionCol):
+  dtype = df.schema[partitionCol].dataType
+  if isinstance(dtype, (DateType, TimestampType)):
+    return "yyyy-MM-dd"
+
+  rows = (
+    df.select(F.col(partitionCol).cast("string").alias("v"))
+      .where(F.col("v").isNotNull())
+      .limit(1)
+      .collect()
+  )
+  if not rows or rows[0]["v"] is None:
+    return None
+  sample = rows[0]["v"].strip()
+
+  # Ordered most-specific first so e.g. 'yyyy-MM-dd' wins before 'yyyy-MM'.
+  patterns = [
+    (r"^\d{4}-\d{2}-\d{2}$", "yyyy-MM-dd"),
+    (r"^\d{4}/\d{2}/\d{2}$", "yyyy/MM/dd"),
+    (r"^\d{4}-\d{2}$",       "yyyy-MM"),
+    (r"^\d{4}/\d{2}$",       "yyyy/MM"),
+    (r"^\d{8}$",             "yyyyMMdd"),
+    (r"^\d{6}$",             "yyyyMM"),
+    (r"^\d{4}$",             "yyyy"),
+  ]
+  for rx, fmt in patterns:
+    if re.match(rx, sample):
+      return fmt
+  return None
+
+# COMMAND ----------
 
 # SaveTabletempPartitions - Save/overwrite a partitioned Delta table in pipeline-temp.
 #
@@ -30,8 +73,8 @@ from pyspark.sql.types import DateType, TimestampType
 #   D -> days, W -> weeks, M -> months, Y -> years,
 #   FY -> fiscal year (July 1 - June 30); anchored to July 1 of the fiscal year
 #         `lookback` years ago.
-# It is then formatted to match the partition column type: Date/Timestamp columns
-# use 'yyyy-MM-dd', any other column type uses 'yyyyMM'.
+# It is then rendered to match how the partition column stores dates, detected
+# automatically from the column type / a sample value (see inferPartitionDateFormat).
 #
 # Args:
 #   tableName     Temp table name (folder under /mnt/mda-pipeline-temp/).
@@ -77,8 +120,14 @@ def saveTabletempPartitions(tableName, df, partitionCol, lookback, unit):
     else:
       raise ValueError("Unknown unit '" + str(unit) + "'. Use one of: D, W, M, Y, FY.")
 
-    # 3) Format to match the partition column type.
-    fmt = "yyyy-MM-dd" if isinstance(df.schema[partitionCol].dataType, (DateType, TimestampType)) else "yyyyMM"
+    # 3) Detect how the partition column stores dates and render the cutoff to match.
+    fmt = inferPartitionDateFormat(df, partitionCol)
+    if fmt is None:
+      raise ValueError(
+        f"Could not infer a date format for partition column '{partitionCol}'. "
+        f"Make it a date/timestamp column or store dates as "
+        f"yyyy-MM-dd / yyyy-MM / yyyyMMdd / yyyyMM / yyyy."
+      )
     backfillStart = spark.range(1).select(F.date_format(startCol, fmt).alias("v")).first()["v"]
 
     print(f"DELTA LOAD — recomputing {partitionCol} >= {backfillStart}")
