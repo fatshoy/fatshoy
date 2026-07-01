@@ -19,8 +19,8 @@
 # MAGIC - Publication banner, e.g. `... Published 19-December-2025`
 # MAGIC - The real column header row (`PGC PC`, `PGC Brand Seg`, `Shipment Type`, ...)
 # MAGIC - Data rows below the header
-# MAGIC - **Divider rows**: author's section notes — only `Product` is populated, every other
-# MAGIC   column is null. These are dropped.
+# MAGIC - **Divider rows**: author's section notes / visual separators — `Key` is null
+# MAGIC   (unlike real data rows, which always carry a Key). These are dropped.
 # MAGIC
 # MAGIC **Output:** `pgc_market_proxy_price_historical_fact` — a historical Delta table on
 # MAGIC `mda-pipeline-refined`; each new publication is appended as a snapshot.
@@ -46,11 +46,11 @@ TEMP_PATH = "/mnt/mda-pipeline-temp/pgc_market_proxy_price_historical_fact"
 PUBLISHED_MARKER = "Published"   # publication banner row
 HEADER_MARKER = "PGC PC"         # first cell of the real header row
 
-# Descriptive column that divider rows populate on their own
-PRODUCT_COL = "Product"
+# Business key column — divider/note rows never have one; real data rows always do
+KEY_COL = "Key"
 
 # DQ uniqueness key
-BUSINESS_KEY = ["Key", "processed_timestamp"]
+BUSINESS_KEY = [KEY_COL, "processed_timestamp"]
 
 # COMMAND ----------
 
@@ -165,7 +165,7 @@ print(f"Header row index: {header_idx}; detected {len(clean_cols)} columns: {cle
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 4: Keep data rows (below header), rename to real headers, drop divider rows
+# MAGIC ## Step 4: Keep data rows (below header), rename to real headers, drop divider rows (Key is null)
 
 # COMMAND ----------
 
@@ -174,11 +174,10 @@ for orig, new_name in header_map.items():
     df_data = df_data.withColumnRenamed(orig, new_name)
 df_data = df_data.select(*clean_cols)
 
-# Drop divider rows: author's section notes where ONLY `Product` is populated
-# (every other column null). This also removes any fully-empty trailing rows.
-non_product_cols = [c for c in clean_cols if c != PRODUCT_COL]
-has_real_data = F.greatest(*[F.col(f"`{c}`").isNotNull().cast("int") for c in non_product_cols]) == 1
-df_data = df_data.filter(has_real_data)
+# Drop divider rows: author's section notes / blanks never carry a Key
+# (Product itself can hold junk like '...', '0', 'Need Currency', or a note).
+# This also removes any fully-empty trailing rows.
+df_data = df_data.filter(F.col(f"`{KEY_COL}`").isNotNull())
 
 # COMMAND ----------
 
