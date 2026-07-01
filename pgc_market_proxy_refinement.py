@@ -56,7 +56,6 @@ BUSINESS_KEY = ["Key", "processed_timestamp"]
 
 from datetime import date, datetime
 import re
-from pyspark.sql import Row
 from pyspark.sql import functions as F
 
 # COMMAND ----------
@@ -125,12 +124,11 @@ print(f"New publication detected ({published_period}). Running refinement.")
 
 # COMMAND ----------
 
-# Spark DataFrames are unordered; coalesce(1) + zipWithIndex preserves the original
-# parquet order so we can find the header row and keep the rows below it.
+# Spark DataFrames are unordered; on a single partition (coalesce(1)) the built-in
+# monotonically_increasing_id() yields a sequential index in parquet order. Unlike an
+# RDD zipWithIndex, this is allowed on shared / Unity Catalog clusters.
 original_cols = mp.columns  # the 'Unnamed: N' columns
-mp_idx = spark.createDataFrame(
-    mp.coalesce(1).rdd.zipWithIndex().map(lambda x: Row(**{**x[0].asDict(), "_row_idx": x[1]}))
-)
+mp_idx = mp.coalesce(1).withColumn("_row_idx", F.monotonically_increasing_id())
 
 header_row = (
     mp_idx.filter(F.col(f"`{original_cols[0]}`").rlike(f"(?i)^\\s*{HEADER_MARKER}\\s*$"))
