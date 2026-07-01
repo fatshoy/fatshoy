@@ -156,6 +156,9 @@ for c in original_cols:
             else:
                 seen[clean] = 1
             header_map[c] = clean
+
+# Drop 'empty' placeholder columns (header cell literally said 'empty'; no data in them).
+header_map = {c: v for c, v in header_map.items() if not re.fullmatch(r"empty(_\d+)?", v)}
 clean_cols = list(header_map.values())
 print(f"Header row index: {header_idx}; detected {len(clean_cols)} columns: {clean_cols}")
 
