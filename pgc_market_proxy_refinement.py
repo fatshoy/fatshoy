@@ -144,11 +144,17 @@ header_idx = header_row["_row_idx"]
 # dots in particular break Spark attribute resolution. Skip header cells that reduce
 # to an empty name (e.g. a divider header made of dots '…..').
 header_map = {}
+seen = {}  # de-duplicate collided names: 2nd 'Shipment_Type' -> 'Shipment_Type_2', etc.
 for c in original_cols:
     v = header_row[c]
     if v not in (None, ""):
         clean = re.sub(r"_+", "_", re.sub(r"[^0-9A-Za-z]+", "_", str(v).strip())).strip("_")
         if clean:
+            if clean in seen:
+                seen[clean] += 1
+                clean = f"{clean}_{seen[clean]}"
+            else:
+                seen[clean] = 1
             header_map[c] = clean
 clean_cols = list(header_map.values())
 print(f"Header row index: {header_idx}; detected {len(clean_cols)} columns: {clean_cols}")
