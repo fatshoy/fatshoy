@@ -140,12 +140,16 @@ if header_row is None:
 header_idx = header_row["_row_idx"]
 
 # Map 'Unnamed: N' -> real header, sanitized to a safe Delta/parquet column name.
+# Replace ANY non-alphanumeric char (spaces, dots, dashes, ellipsis, ...) with '_';
+# dots in particular break Spark attribute resolution. Skip header cells that reduce
+# to an empty name (e.g. a divider header made of dots '…..').
 header_map = {}
 for c in original_cols:
     v = header_row[c]
     if v not in (None, ""):
-        clean = re.sub(r"_+", "_", re.sub(r"[ ,;{}()\n\t=]+", "_", str(v).strip())).strip("_")
-        header_map[c] = clean
+        clean = re.sub(r"_+", "_", re.sub(r"[^0-9A-Za-z]+", "_", str(v).strip())).strip("_")
+        if clean:
+            header_map[c] = clean
 clean_cols = list(header_map.values())
 print(f"Header row index: {header_idx}; detected {len(clean_cols)} columns: {clean_cols}")
 
