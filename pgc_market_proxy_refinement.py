@@ -76,16 +76,18 @@ for c in mp.columns:
         banner_text = r[0]
         break
 
-# Parse 'Month-Year' — handles '...Published 19-December-2025' and '...Published December-2025'.
-m = re.search(r"Published\s+(?:\d{1,2}-)?([A-Za-z]+)-(\d{4})", banner_text or "", re.IGNORECASE)
+# Parse the real publication date — handles '...Published 19-December-2025',
+# '...Published 8-September-2025' and (fallback) '...Published December-2025'.
+m = re.search(r"Published\s+(?:(\d{1,2})-)?([A-Za-z]+)-(\d{4})", banner_text or "", re.IGNORECASE)
 if not m:
     raise ValueError(f"Could not parse publication date from banner: {banner_text!r}")
 
-published_year = int(m.group(2))
-published_month = datetime.strptime(m.group(1)[:3], "%b").month  # 'Dec'/'December' -> 12
-published_date = date(published_year, published_month, 1)
-published_period = f"{published_date.strftime('%B')}-{published_year}"  # 'December-2025'
-print(f"File publication period: {published_period} ({published_date})")
+published_day = int(m.group(1)) if m.group(1) else 1  # fallback to 1st if no day in banner
+published_month = datetime.strptime(m.group(2)[:3], "%b").month  # 'Dec'/'December' -> 12
+published_year = int(m.group(3))
+published_date = date(published_year, published_month, published_day)  # real publication date
+published_period = published_date.strftime("%d-%B-%Y")  # '19-December-2025'
+print(f"File publication date: {published_date} ({published_period})")
 
 # COMMAND ----------
 
