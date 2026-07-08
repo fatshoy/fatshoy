@@ -22,6 +22,9 @@
 # MAGIC - **Divider rows**: author's section notes / visual separators — `Key` is null
 # MAGIC   (unlike real data rows, which always carry a Key). These are dropped.
 # MAGIC
+# MAGIC Of the ~285 raw columns, only a fixed whitelist (`KEEP_COLUMNS`) of business columns
+# MAGIC is kept — the rest are internal working formulas not needed downstream.
+# MAGIC
 # MAGIC **Output:** `pgc_market_proxy_price_historical_fact` — a historical Delta table on
 # MAGIC `mda-pipeline-refined`; each new publication is appended as a snapshot.
 
@@ -45,6 +48,39 @@ TEMP_PATH = "/mnt/mda-pipeline-temp/pgc_market_proxy_price_historical_fact"
 # Text markers used to locate rows by content (case-insensitive)
 PUBLISHED_MARKER = "Published"   # publication banner row
 HEADER_MARKER = "PGC PC"         # first cell of the real header row
+
+# Whitelist of business columns to keep, keyed by the header cell text (whitespace
+# collapsed, case-insensitive). The raw file carries ~285 columns of internal working
+# formulas — only these are needed downstream. A couple of header labels repeat verbatim
+# elsewhere in the sheet for unrelated working columns (e.g. a second 'Currency' near
+# TP_Local, a second 'Shipment Type'/'BU' further right) — matching takes the FIRST
+# occurrence in file order and ignores later repeats of the same text.
+KEEP_COLUMNS = {
+    "pgc pc": "PGC_PC",
+    "pgc brand seg": "PGC_Brand_Seg",
+    "shipment type": "Shipment_Type",
+    "product": "Product",
+    "customer": "Customer",
+    "pc": "PC",
+    "key": "Key",
+    "pc-prod": "PC_PROD",
+    "pc-prod extended": "PC_PROD_EXTENDED",
+    "bu": "BU",
+    "mega": "MEGA",
+    "region": "REGION",
+    "category": "Category",
+    "fy 25-26": "FY_25_26",
+    "bulk /mt": "Bulk_mT",
+    "sustainability costs": "Sustainability_Costs",
+    "logistics /mt": "Logistics_mT",
+    "fx adj. /mt": "FX_Adj_mT",
+    "proc/ec4w /mt": "Proc_EC4W_mT",
+    "delivery /mt": "Delivery_mT",
+    "market proxy/mt": "Market_Proxy_mT",
+    "local currency/mt": "Market_Proxy_Price_Local_Currency_mT",
+    "currency": "Invoice_Currency",
+    "local currency /mt": "OND_Transfer_Price_Local_Currency_mT",
+}
 
 # Business key column — divider/note rows never have one; real data rows always do
 KEY_COL = "Key"
@@ -120,7 +156,7 @@ print(f"New publication detected ({published_period}). Running refinement.")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Add a stable row index and locate the header row
+# MAGIC ## Step 3: Add a stable row index, locate the header row, and select needed columns
 
 # COMMAND ----------
 
@@ -139,28 +175,24 @@ if header_row is None:
     raise ValueError(f"Header row not found (marker='{HEADER_MARKER}').")
 header_idx = header_row["_row_idx"]
 
-# Map 'Unnamed: N' -> real header, sanitized to a safe Delta/parquet column name.
-# Replace ANY non-alphanumeric char (spaces, dots, dashes, ellipsis, ...) with '_';
-# dots in particular break Spark attribute resolution. Skip header cells that reduce
-# to an empty name (e.g. a divider header made of dots '…..').
+# Map 'Unnamed: N' -> the target business name, matching against KEEP_COLUMNS only.
+# Everything else in the raw header row (~285 columns of internal working formulas)
+# is dropped right here — cheapest point to drop them, before any row filtering runs.
+remaining = dict(KEEP_COLUMNS)  # popped on match so a later repeat of the same text is ignored
 header_map = {}
-seen = {}  # de-duplicate collided names: 2nd 'Shipment_Type' -> 'Shipment_Type_2', etc.
 for c in original_cols:
     v = header_row[c]
-    if v not in (None, ""):
-        clean = re.sub(r"_+", "_", re.sub(r"[^0-9A-Za-z]+", "_", str(v).strip())).strip("_")
-        if clean:
-            if clean in seen:
-                seen[clean] += 1
-                clean = f"{clean}_{seen[clean]}"
-            else:
-                seen[clean] = 1
-            header_map[c] = clean
+    if v in (None, ""):
+        continue
+    normalized = re.sub(r"\s+", " ", str(v).strip()).lower()
+    if normalized in remaining:
+        header_map[c] = remaining.pop(normalized)
 
-# Drop placeholder columns with no real data (header cell said 'empty'/'blank'/'0'/'Okay').
-header_map = {c: v for c, v in header_map.items() if not re.fullmatch(r"(empty|blank|0|Okay)(_\d+)?", v, re.IGNORECASE)}
+if remaining:
+    raise ValueError(f"Expected column(s) not found in source header row: {sorted(remaining.values())}")
+
 clean_cols = list(header_map.values())
-print(f"Header row index: {header_idx}; detected {len(clean_cols)} columns: {clean_cols}")
+print(f"Header row index: {header_idx}; keeping {len(clean_cols)} columns: {clean_cols}")
 
 # COMMAND ----------
 
