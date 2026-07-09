@@ -54,9 +54,12 @@ from pyspark.sql import functions as F
 
 pdt = spark.read.parquet(SOURCE_PARQUET_PATH)
 
-df_data = pdt.select(*COLUMN_MAPPING.keys())
-for src_col, tgt_col in COLUMN_MAPPING.items():
-    df_data = df_data.withColumnRenamed(src_col, tgt_col)
+# Select + rename in one step via backtick-quoted F.col: a plain string select() splits
+# on '.' as a nested-field path, which would break on a source name containing a dot.
+# Backticks around the whole name quote it as one literal identifier, dots included.
+df_data = pdt.select(
+    *[F.col(f"`{src_col}`").alias(tgt_col) for src_col, tgt_col in COLUMN_MAPPING.items()]
+)
 
 pdt_market_proxy_price_historical_fact = df_data.withColumn(
     "processed_timestamp", F.current_timestamp()

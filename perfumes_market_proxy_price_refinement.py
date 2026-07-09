@@ -63,13 +63,15 @@ from pyspark.sql import functions as F
 internal_perfumes = spark.read.parquet(INTERNAL_PERFUMES_PATH)
 aroma_chemicals = spark.read.parquet(AROMA_CHEMICALS_PATH)
 
-df_internal_perfumes = internal_perfumes.select(*INTERNAL_PERFUMES_MAPPING.keys())
-for src_col, tgt_col in INTERNAL_PERFUMES_MAPPING.items():
-    df_internal_perfumes = df_internal_perfumes.withColumnRenamed(src_col, tgt_col)
-
-df_aroma_chemicals = aroma_chemicals.select(*AROMA_CHEMICALS_MAPPING.keys())
-for src_col, tgt_col in AROMA_CHEMICALS_MAPPING.items():
-    df_aroma_chemicals = df_aroma_chemicals.withColumnRenamed(src_col, tgt_col)
+# Select + rename in one step via backtick-quoted F.col: a plain string select() splits
+# on '.' as a nested-field path, which breaks on source names like 'W.A. PRICE PER KG USD'.
+# Backticks around the whole name quote it as one literal identifier, dots included.
+df_internal_perfumes = internal_perfumes.select(
+    *[F.col(f"`{src_col}`").alias(tgt_col) for src_col, tgt_col in INTERNAL_PERFUMES_MAPPING.items()]
+)
+df_aroma_chemicals = aroma_chemicals.select(
+    *[F.col(f"`{src_col}`").alias(tgt_col) for src_col, tgt_col in AROMA_CHEMICALS_MAPPING.items()]
+)
 
 # COMMAND ----------
 
