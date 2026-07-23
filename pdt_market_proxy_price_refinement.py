@@ -36,7 +36,11 @@ COLUMN_MAPPING = {
     "PDT NAME": "material_description",
     "Production Plant": "plant_code",
     "PMC $/KG:string": "price_per_kg_usd",
+    "Process Date": "source_process_date",  # yyyyMMdd date the file was sent to us
 }
+
+# material_id (GCAS) is zero-padded to this width to match the standard material_id format
+MATERIAL_ID_WIDTH = 18
 
 # DQ uniqueness key
 BUSINESS_KEY = ["material_id", "plant_code", "processed_timestamp"]
@@ -59,6 +63,11 @@ pdt = spark.read.parquet(SOURCE_PARQUET_PATH)
 # Backticks around the whole name quote it as one literal identifier, dots included.
 df_data = pdt.select(
     *[F.col(f"`{src_col}`").alias(tgt_col) for src_col, tgt_col in COLUMN_MAPPING.items()]
+)
+
+# Zero-pad material_id (GCAS) to the standard width, e.g. 21306845 -> 000000000021306845.
+df_data = df_data.withColumn(
+    "material_id", F.lpad(F.col("material_id").cast("string"), MATERIAL_ID_WIDTH, "0")
 )
 
 pdt_market_proxy_price_historical_fact = df_data.withColumn(
