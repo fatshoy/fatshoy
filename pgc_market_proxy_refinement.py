@@ -5,16 +5,19 @@
 # MAGIC %md
 # MAGIC # PGC Market Proxy Price — Historical Fact Refinement
 # MAGIC
-# MAGIC The upstream framework drops `PGC Market Proxy Price File.xlsx` into storage with a
-# MAGIC **constant file name and sheet name** and converts it to parquet. The source now
-# MAGIC ships with real column headers (`Plant ID`, `Product`, `Price`, `Published Date`) —
-# MAGIC a plain flat table, no in-data header row or divider rows to locate.
+# MAGIC The upstream framework drops `PGC Market Proxy Price File/Harmoni Tab.xlsx` into
+# MAGIC storage with a **constant file name and sheet name** and converts it to parquet. The
+# MAGIC source is a plain flat table with real column headers (`Customer`, `Plant Code`,
+# MAGIC `Product`, `Price`, `Date`, `Shipment Type Filter`) — no in-data header row or
+# MAGIC divider rows to locate.
 # MAGIC
 # MAGIC We don't know the exact day a new file appears, so this notebook **pings the source
-# MAGIC daily**: the source carries its own `Published Date`; if that's not newer than what's
-# MAGIC already stored, it exits immediately (fast & cheap); when it is newer, it refines and
-# MAGIC appends. Rows are kept as-is — e.g. the same Plant/Product/Published Date can
-# MAGIC legitimately appear with more than one Price, so `price` is part of the business key.
+# MAGIC daily**: the source carries its own `Date`; if that's not newer than the
+# MAGIC `published_date` already stored, it exits immediately (fast & cheap) before doing any
+# MAGIC further processing — otherwise it refines and appends.
+# MAGIC
+# MAGIC `material_id` is derived from the first 8 characters of `Product` (the material code),
+# MAGIC zero-padded to 18 digits, and used to look up `material_desc` from `mat_attr_dim`.
 # MAGIC
 # MAGIC **Output:** `pgc_market_proxy_price_historical_fact` — a historical Delta table on
 # MAGIC `mda-pipeline-refined`; each new published_date is appended as a snapshot.
@@ -29,25 +32,45 @@
 # --- PARAMETERS (easy to change) ---
 
 # Source parquet (constant name, content changes over time)
-SOURCE_PARQUET_PATH = "/mnt/sharepoint/Foyer/PGC Market Proxy Price File/2526 Market Proxies.parquet"
+SOURCE_PARQUET_PATH = "/mnt/sharepoint/Foyer/PGC Market Proxy Price File/Harmoni Tab.parquet"
 
 # Target historical fact table (Delta, append per new published_date)
 TARGET_TABLE_NAME = "pgc_market_proxy_price_historical_fact"
 TARGET_PATH = "/mnt/mda-pipeline-refined/pgc_market_proxy_price_historical_fact"
 TEMP_PATH = "/mnt/mda-pipeline-temp/pgc_market_proxy_price_historical_fact"
 
-# Column mapping: source_column -> target_column
+# Direct column mapping: source_column -> target_column (Product handled separately below,
+# it's not carried through as-is — material_id/material_desc are derived from it instead)
+SOURCE_DATE_COL = "Date"  # our watermark, before renaming
 COLUMN_MAPPING = {
-    "Plant ID": "plant_code",
-    "Product": "product",  # kept as a single field: source combines code + description
+    "Plant Code": "plant_code",
+    "Customer": "customer",
     "Price": "price",
-    "Published Date": "published_date",  # our watermark
+    SOURCE_DATE_COL: "published_date",
+    "Shipment Type Filter": "shipment_type_filter",
 }
 PUBLISHED_DATE_COL = "published_date"
 
-# DQ uniqueness key — price is part of it: the same plant/product/date can legitimately
-# carry more than one price, so this only catches truly identical duplicate rows.
-BUSINESS_KEY = ["plant_code", "product", PUBLISHED_DATE_COL, "price"]
+# material_id: first N chars of Product (the material code prefix), zero-padded to 18 digits
+MATERIAL_CODE_LEN = 8
+MATERIAL_ID_WIDTH = 18
+
+# Material attribute dimension used to look up material_desc by material_id (left join —
+# a material_id with no match in the dimension keeps its row, with material_desc = NULL)
+MAT_ATTR_DIM_TABLE = "mat_attr_dim"
+MAT_ATTR_DIM_KEY_COL = "material_id"
+MAT_ATTR_DIM_DESC_COL = "material_desc"  # adjust here if the real column is material_description
+
+# DQ uniqueness key — price is part of it: the same customer/plant/material/date/shipment
+# type can legitimately carry more than one price, so this only catches truly identical rows.
+BUSINESS_KEY = [
+    "customer",
+    "plant_code",
+    "material_id",
+    "shipment_type_filter",
+    PUBLISHED_DATE_COL,
+    "price",
+]
 
 # COMMAND ----------
 
@@ -56,20 +79,14 @@ from pyspark.sql import functions as F
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 1: Read source, select and rename columns
+# MAGIC ## Step 1: Read source and compute the new file's max published_date
 
 # COMMAND ----------
 
 pgc = spark.read.parquet(SOURCE_PARQUET_PATH)
 
-# Select + rename in one step via backtick-quoted F.col (safe even if a name ever
-# contains a dot or other special character — quotes the whole name as one literal).
-pgc_market_proxy_price_historical_fact = pgc.select(
-    *[F.col(f"`{src_col}`").alias(tgt_col) for src_col, tgt_col in COLUMN_MAPPING.items()]
-).withColumn(PUBLISHED_DATE_COL, F.col(f"`{PUBLISHED_DATE_COL}`").cast("date"))
-
-new_max_published_date = pgc_market_proxy_price_historical_fact.agg(
-    F.max(PUBLISHED_DATE_COL).alias("m")
+new_max_published_date = pgc.agg(
+    F.max(F.col(f"`{SOURCE_DATE_COL}`").cast("date")).alias("m")
 ).first()["m"]
 print(f"New file's max {PUBLISHED_DATE_COL}: {new_max_published_date}")
 
@@ -103,12 +120,36 @@ if last_published_date is not None and (
     dbutils.notebook.exit(f"SKIP: {new_max_published_date} already processed")
 
 print(f"New data detected ({new_max_published_date}). Running refinement.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 3: Select/rename columns, derive material_id, look up material_desc
+
+# COMMAND ----------
+
+# Select + rename in one step via backtick-quoted F.col (safe even if a name ever
+# contains a dot or other special character — quotes the whole name as one literal).
+df_data = pgc.select(
+    *[F.col(f"`{src_col}`").alias(tgt_col) for src_col, tgt_col in COLUMN_MAPPING.items()],
+    F.lpad(
+        F.substring(F.trim(F.col("`Product`")), 1, MATERIAL_CODE_LEN), MATERIAL_ID_WIDTH, "0"
+    ).alias("material_id"),
+).withColumn(PUBLISHED_DATE_COL, F.col(PUBLISHED_DATE_COL).cast("date"))
+
+mat_attr_dim = spark.table(MAT_ATTR_DIM_TABLE).select(
+    F.col(MAT_ATTR_DIM_KEY_COL).alias("material_id"),
+    F.col(MAT_ATTR_DIM_DESC_COL).alias("material_desc"),
+)
+pgc_market_proxy_price_historical_fact = df_data.join(mat_attr_dim, on="material_id", how="left")
+
+print(f"Refined records: {pgc_market_proxy_price_historical_fact.count()}")
 pgc_market_proxy_price_historical_fact.display()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Stage to temp, DQ check, append to historical Delta table
+# MAGIC ## Step 4: Stage to temp, DQ check, append to historical Delta table
 
 # COMMAND ----------
 
