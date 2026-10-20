@@ -25,6 +25,7 @@
 # MAGIC - MLC classification via regex on project name keywords (freight, transport, logistics)
 # MAGIC - ta_cur = (totalsavings / TotalNumberofMonths) * MonthsinFiscalYear
 # MAGIC - hercules_subsector_savings_fact: sub-region K3 "(I)EUROPE EM" was end-dated in geo_705 on 2026-06-30 and replaced by XH "EUROPE AREA"; K3 savings lines are remapped to XH before the region join
+# MAGIC - ibl_atlas_fact: K3 keeps its own sub-region "(I)EUROPE EM" (region EUROPE), since remapping to XH would duplicate the business key
 # MAGIC
 
 # COMMAND ----------
@@ -108,7 +109,9 @@ WITH base AS (
         level_03,
         level_03_short_txt
         FROM cdl_fps_prod.silver_master_data.geo_705_flat_hier_dim
-        WHERE valid_to = '99991231'
+        -- K3 "(I)EUROPE EM" is end-dated but kept as its own sub-region here:
+        -- remapping it to XH would duplicate the table's business key
+        WHERE valid_to = '99991231' OR level_03 = 'K3'
     ) r ON ns.SubRegion = r.level_03
     LEFT JOIN (
         SELECT DISTINCT subsector_legacy_id, subsector_short_name
