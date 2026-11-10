@@ -1,0 +1,22 @@
+cc,loc,lat,lon,validate_cc,note
+AS,ASPPG,-14.2766,-170.69,,UN/LOCODE 1416N has the wrong hemisphere; Pago Pago harbour is 14.28S
+CN,CNYTN,22.58,114.28,,UN/LOCODE 2651N 11952E is in Fujian; Yantian port is in Shenzhen
+TR,TREVY,40.7667,29.7,,UN/LOCODE 4002N 04303E is in eastern Anatolia; Evyapan = Evyap Port Kocaeli (TREYP)
+IC,ICDN EMBAKASI,-1.318,36.88,KE,"Embakasi ICD, Nairobi; source country code 'IC' is a parsing artefact"
+CN,CNXGG,39.0,117.7,,Tianjin Xingang (Binhai New Area); 'Binhai' city name is ambiguous
+CN,CNYSA,30.63,122.07,,Yangshan deep-water port (Shanghai); no UN/LOCODE or gazetteer position
+EG,EGDEK,31.133,29.8,,"El Dekheila port (Alexandria), same port as EGEDK"
+IN,INTKD,28.506,77.269,,"Tughlakabad ICD, New Delhi - inland container depot, inland by design"
+US,USCHT,39.8476,-75.3577,,"Chester, PA (Delaware River); legacy point was Chattanooga, TN"
+SE,"HELSINKI, 00160",60.165,24.96,FI,Helsinki 00160 (Katajanokka); source country SE is wrong
+DE,"KISTA, 16440",59.403,17.944,SE,"Kista 164 40, Stockholm; source country DE is wrong"
+DE,"LE GRAND SACONNEX, 01218",46.232,6.121,CH,"Le Grand-Saconnex 1218, Geneva; source country DE is wrong"
+EG,"10TH RAMADAN, 44916",30.29,31.75,,10th of Ramadan City - approximate city centre
+EG,"6TH OCTOBER CITY, 001101",29.97,30.95,,6th of October City - approximate city centre
+TR,"ERGENE, 00000",41.195,27.625,,"Ergene district (Velimese), Tekirdag - approximate centre"
+MX,"Laredo,78040",27.4763,-99.5164,,78040 is a Laredo TX ZIP; MX side of the crossing = Nuevo Laredo
+MX,LAREDO,27.4763,-99.5164,,"Laredo border crossing, MX side = Nuevo Laredo; legacy point was in Michoacan"
+PK,PKQCT,24.7814,67.3594,,"Qasim International Container Terminal, Port Qasim (not Karachi city)"
+FR,"Lavera, 13117",43.389,5.005,,Lavera (Martigues) petrochemical port; legacy point was Strasbourg
+FR,"SALIN-DE-GIRAUD, 13129",43.412,4.731,,Salin-de-Giraud (Arles); legacy point was Strasbourg
+BE,"ROTTERDAM, 3195 ND",51.885,4.385,NL,"3195 ND = Pernis, Rotterdam; source country BE is wrong"
