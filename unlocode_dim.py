@@ -21,8 +21,19 @@
 # MAGIC - source disagreement > 50 km (a candidate with no support is dropped when ≥2 other independent sources agree elsewhere)
 # MAGIC - ocean ports > 40 km from the coast without a port-gazetteer confirmation
 # MAGIC
-# MAGIC **Output**: `cdl_mda_prod.internal_material_data_asset.unlocode_dim` (one row per location) plus CSVs in the
-# MAGIC output volume: pair map in legacy `Geo_Enriched` format, manual review list and validation report.
+# MAGIC **Modes** (widget `mode`)
+# MAGIC - `incremental` (default, scheduled): coordinates already accepted (status OK) are frozen; only new locations,
+# MAGIC   previous REVIEW/MISSING and manual overrides are (re)computed. Locations no longer used get `is_active = false`.
+# MAGIC - `full`: every coordinate is recomputed (after a reference-data refresh or a rule change).
+# MAGIC
+# MAGIC **Data-quality gate**: `run_dq_checks` runs before any write; a failed ERROR check stops the job and nothing is
+# MAGIC overwritten. Results are appended to `market_map_dq`.
+# MAGIC
+# MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `unlocode_dim` (one row per location), `market_map`
+# MAGIC (pairs in the legacy `Geo_Enriched` layout), `unlocode_dim_history` (snapshot per build_date), `market_map_dq`.
+# MAGIC Optional Delta copy in `cdl_mda_prod.internal_material_data_asset.unlocode_dim`. Review list, report and
+# MAGIC candidates go to the output volume as CSV.
+# MAGIC
 # MAGIC Cells whose first line is `# CORE` are plain Python (no Spark) so the same code runs locally
 # MAGIC (`market_map/run_local.py`).
 
@@ -37,19 +48,40 @@
 
 # COMMAND ----------
 
+# Run mode (job parameter):
+#   incremental - keep every coordinate already accepted (status OK), geocode only new / unresolved locations
+#   full        - recompute every coordinate (after reference refresh or rule changes); history is kept
+dbutils.widgets.dropdown("mode", "incremental", ["incremental", "full"])
+dbutils.widgets.dropdown("refresh_refs", "false", ["false", "true"])
+MODE = dbutils.widgets.get("mode")
+REFRESH_REFS = dbutils.widgets.get("refresh_refs") == "true"   # re-download GeoNames / Natural Earth / ports
+
+# Parquet outputs (same convention as the other refined tables: /mnt/mda-pipeline-refined/<name>)
+DIM_TABLE_NAME = "unlocode_dim"            # one row per location
+PAIR_TABLE_NAME = "market_map"             # pair map, legacy Geo_Enriched layout
+REFINED_ROOT = "/mnt/mda-pipeline-refined"
+DIM_PATH = f"{REFINED_ROOT}/{DIM_TABLE_NAME}"
+PAIR_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}"
+HISTORY_PATH = f"{REFINED_ROOT}/{DIM_TABLE_NAME}_history"   # dim snapshot per build_date
+DQ_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}_dq"            # data-quality results per run
+
+# Optional Unity Catalog copy of the dim (UC managed tables are always Delta)
+WRITE_UC_TABLE = True
 TARGET_TABLE = "cdl_mda_prod.internal_material_data_asset.unlocode_dim"
-PAIR_MAP_TABLE = None  # set a table name to also persist the pair map, e.g. "...market_map"
+
+# DQ gate: stop before writing when more than this share of rate records sits on unresolved locations
+MAX_UNRESOLVED_RECORD_SHARE = 0.01
 
 VOLUME_DIR = "/Volumes/cdl_mda_prod/internal_material_data_asset/market_map"
 REF_DIR = f"{VOLUME_DIR}/reference"   # downloaded reference data (cached)
 IN_DIR = f"{VOLUME_DIR}/input"        # uploaded inputs
-OUT_DIR = f"{VOLUME_DIR}/output"      # CSV outputs
-REFRESH_REFS = False                  # True = re-download reference data
+OUT_DIR = f"{VOLUME_DIR}/output"      # review list, report, candidates (CSV / markdown)
 
 # Inputs: a /Volumes path to a CSV, or a UC table name
-CONSULTANT_LOCATIONS = f"{IN_DIR}/All_consultant_locations.csv"
+CONSULTANT_LOCATIONS = f"{IN_DIR}/All_consultant_locations.csv"   # cc, loc, loc_desc, modes, sources, n_records, last_valid_to
 UNLOCODE = f"{IN_DIR}/UNLOCODE_with_coordinates.csv"
-LEGACY_MARKET_MAP = f"{IN_DIR}/Geo_Enriched.csv"
+LEGACY_MARKET_MAP = f"{IN_DIR}/Geo_Enriched.csv"                  # old pair map: source of "legacy" candidates
+PAIRS = None  # lanes to map (origin/dest cc + loc columns); None = the pairs of LEGACY_MARKET_MAP
 
 REF_URLS = {
     "gn_postal_all.zip": "https://download.geonames.org/export/zip/allCountries.zip",
@@ -122,6 +154,7 @@ def _input(src, name):
 
 
 PATHS = {
+    "pairs": _input(PAIRS, "pairs") if PAIRS else None,
     "consultant": _input(CONSULTANT_LOCATIONS, "consultant"),
     "unlocode": _input(UNLOCODE, "unlocode"),
     "legacy": _input(LEGACY_MARKET_MAP, "legacy"),
@@ -714,19 +747,25 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
             .groupby(["cc", "loc_key"], as_index=False, sort=False)
             .agg(loc=("loc_key", "first"), loc_desc=("loc_desc", "first"), modes=("modes", union),
                  sources=("sources", union), n_records=("n_records", "sum"), last_valid_to=("last_valid_to", "max")))
-    # locations used by the legacy pair map but missing from the consultant list are kept too
     leg = pd.read_csv(paths["legacy"], dtype=str, keep_default_na=False)
-    leg_raw = leg.copy()  # pair map output keeps the legacy rows exactly as they were
     for s_ in ("origin", "dest"):
         leg[f"{s_}_loc_country_code"] = leg[f"{s_}_loc_country_code"].str.strip().str.upper()
-    ends = pd.concat([leg[[f"{s}_loc_country_code", f"{s}_loc"]].set_axis(["cc", "loc"], axis=1)
+    # pairs to map: a separate source when given (new lanes), else the legacy pair map itself
+    pairs_raw = (pd.read_csv(paths["pairs"], dtype=str, keep_default_na=False)
+                 if paths.get("pairs") else pd.read_csv(paths["legacy"], dtype=str, keep_default_na=False))
+    pairs_raw = pairs_raw[PAIR_KEY_COLS].copy()  # output keeps the key values exactly as they came
+    pn = pairs_raw.copy()
+    for s_ in ("origin", "dest"):
+        pn[f"{s_}_loc_country_code"] = pn[f"{s_}_loc_country_code"].str.strip().str.upper()
+    # pair endpoints missing from the consultant list are geocoded too
+    ends = pd.concat([pn[[f"{s}_loc_country_code", f"{s}_loc"]].set_axis(["cc", "loc"], axis=1)
                       for s in ("origin", "dest")])
     ends["loc_key"] = ends["loc"].str.strip()
     extra = ends.drop_duplicates(["cc", "loc_key"]).merge(cons[["cc", "loc_key"]], how="left", indicator=True)
     extra = extra[extra._merge == "left_only"].drop(columns="_merge")
     if len(extra):
-        log(f"{len(extra)} legacy-only locations added: {extra.loc_key.tolist()[:10]}")
-        extra = extra.assign(loc=extra.loc_key, loc_desc="null", modes="", sources="legacy_only", n_records=0,
+        log(f"{len(extra)} pair-only locations added: {extra.loc_key.tolist()[:10]}")
+        extra = extra.assign(loc=extra.loc_key, loc_desc="null", modes="", sources="pairs_only", n_records=0,
                              last_valid_to="")
         cons = pd.concat([cons, extra[cons.columns]], ignore_index=True)
     manual_by = {(m[0], m[1]): m for m in manual}
@@ -888,12 +927,12 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
     dim["build_ts"] = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
     dim = dim.drop(columns=["port_pts", "identity"])
 
-    pair = _pair_map(leg_raw, dim)
+    pair = _pair_map(pairs_raw, dim)
     cands_df = pd.DataFrame(cand_rows)
     review = _review_list(dim, cands_df)
     report = _report(dim, cands_df, refs, paths)
     log(f"built {len(dim)} locations in {(datetime.now(timezone.utc) - t0).seconds}s")
-    return {"dim": dim, "pair_map": pair, "review": review, "candidates": cands_df, "report": report,
+    return {"dim": dim, "pair_map": pair, "pairs_in": pairs_raw, "review": review, "candidates": cands_df, "report": report,
             "manual": pd.DataFrame(manual, columns=["cc", "loc", "lat", "lon", "validate_cc", "note"])}
 
 
@@ -912,7 +951,9 @@ def _confidence(c, row):
 
 def _validate(df, countries, coast, label):
     out_flag, dist, pc, shared, coast_km, misplaced = [], [], [], [], [], []
-    precise = df["geo_src"].map(lambda x: x not in APPROX_SOURCES) if "geo_src" in df else pd.Series(True, df.index)
+    # approximations coincide by design; manual points are reviewed (e.g. two codes for one port)
+    precise = (df["geo_src"].map(lambda x: x not in APPROX_SOURCES + ("manual",)) if "geo_src" in df
+               else pd.Series(True, df.index))
     pts = [((r.cc, r.loc), r.lat, r.lon, r.identity) for r, ok in zip(df.itertuples(), precise)
            if pd.notna(r.lat) and ok]
     sh = _shared_groups(pts)
@@ -959,16 +1000,21 @@ def _review_reasons(r):
     return ";".join(out)
 
 
-def _pair_map(leg, dim):
+PAIR_KEY_COLS = ["origin_loc_country_code", "origin_loc", "dest_loc_country_code", "dest_loc"]
+PAIR_COLS = ["origin_loc_country_code", "origin_loc", "dest_loc_country_code", "dest_loc", "origin_lat",
+             "origin_lon", "origin_geo_src", "dest_lat", "dest_lon", "dest_geo_src"]  # legacy Geo_Enriched layout
+
+
+def _pair_map(pairs, dim):
     look = {(r.cc, r.loc): (r.lat, r.lon, r.geo_src) for r in dim.itertuples()}
-    out = leg.copy()
+    out = pairs[PAIR_KEY_COLS].copy()
     for side in ("origin", "dest"):
         vals = [look.get((str(cc).strip().upper(), str(loc).strip()), (None, None, "none"))
                 for cc, loc in zip(out[f"{side}_loc_country_code"], out[f"{side}_loc"])]
         out[f"{side}_lat"] = [v[0] for v in vals]
         out[f"{side}_lon"] = [v[1] for v in vals]
         out[f"{side}_geo_src"] = [v[2] if pd.notna(v[0]) else "none" for v in vals]
-    return out
+    return out[PAIR_COLS]
 
 
 def _review_list(dim, cands):
@@ -1070,32 +1116,152 @@ def _report(dim, cands, refs, paths):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 2: Run the build
+# MAGIC ## Core: incremental merge and data-quality checks
 
 # COMMAND ----------
 
-res = build(PATHS)
-dim = res["dim"]
-print(res["report"][:3000])
-display(dim.groupby(["status", "geo_src"]).size().reset_index(name="locations"))
+# CORE
+# Coordinate and validation columns that are frozen for locations already accepted in an earlier run
+COORD_COLS = ["lat", "lon", "geo_src", "geo_conf", "geo_detail", "supporting_sources", "n_supporting",
+              "max_disagree_km", "disagree_sources", "outvoted_sources", "country_check", "country_dist_km",
+              "outside_country", "point_country", "shared_point_n", "coast_km", "port_misplaced",
+              "review_reasons", "status"]
+
+
+def merge_incremental(new, prev, manual_keys, run_date, full_rebuild=False):
+    """Keep the coordinates of locations that were OK in the previous dim, so the market_map is stable.
+    Recomputed: new locations, previous REVIEW/MISSING, manual overrides, everything when full_rebuild.
+    Locations that disappeared from the inputs stay in the dim with is_active = False."""
+    new = new.copy().reset_index(drop=True)
+    new["is_active"] = True
+    new["first_seen_date"] = run_date
+    new["change"] = "new"
+    new["recalc_drift_km"] = np.nan
+    if prev is None or len(prev) == 0:
+        return new
+    prev = prev.copy()
+    prev["n_supporting"] = pd.to_numeric(prev.get("n_supporting"), errors="coerce")
+    pv = {(r["cc"], r["loc"]): r for r in prev.to_dict("records")}
+    for i, r in new.iterrows():
+        k = (r["cc"], r["loc"])
+        p = pv.get(k)
+        if p is None:
+            continue
+        new.at[i, "first_seen_date"] = p.get("first_seen_date") or run_date
+        frozen = (not full_rebuild and p.get("status") == "OK" and k not in manual_keys
+                  and pd.notna(p.get("lat")))
+        if frozen:
+            if pd.notna(r["lat"]):
+                new.at[i, "recalc_drift_km"] = round(hav(p["lat"], p["lon"], r["lat"], r["lon"]), 1)
+            for c in COORD_COLS:
+                if c in p:
+                    new.at[i, c] = p[c]
+            new.at[i, "change"] = "kept"
+        else:
+            same = (pd.notna(p.get("lat")) and pd.notna(r["lat"])
+                    and hav(p["lat"], p["lon"], r["lat"], r["lon"]) < 0.01)
+            new.at[i, "change"] = "unchanged" if same else "updated"
+    gone = [p for k, p in pv.items() if k not in set(zip(new.cc, new["loc"]))]
+    if gone:
+        g = pd.DataFrame(gone)
+        g["is_active"], g["change"] = False, "inactive"
+        new = pd.concat([new, g[[c for c in g.columns if c in new.columns]]], ignore_index=True)
+    return new
+
+
+def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=0.01):
+    """Data-quality gate. ERROR checks must pass before anything is written; WARN checks are reported."""
+    out = []
+
+    def add(check, severity, bad_mask_or_count, total, frame=None):
+        bad = int(bad_mask_or_count.sum()) if hasattr(bad_mask_or_count, "sum") else int(bad_mask_or_count)
+        ex = ""
+        if frame is not None and bad and hasattr(bad_mask_or_count, "sum"):
+            ex = "; ".join(f"{a}|{b}" for a, b in frame.loc[bad_mask_or_count, ["cc", "loc"]].head(5).values)
+        out.append({"check": check, "severity": severity, "failed": bad, "total": int(total),
+                    "passed": bad == 0, "examples": ex})
+
+    d = dim.reset_index(drop=True)
+    act = d["is_active"].fillna(True).astype(bool) if "is_active" in d else pd.Series(True, d.index)
+    has = d.lat.notna() & d.lon.notna()
+    ok = d.status == "OK"
+    n = len(d)
+    # --- structure
+    add("dim: (cc, loc) is unique", "ERROR", d.duplicated(["cc", "loc"], keep=False), n, d)
+    add("dim: cc is a 2-letter code", "ERROR", ~d.cc.astype(str).str.fullmatch(r"[A-Z]{2}"), n, d)
+    add("dim: status in OK/REVIEW/MISSING", "ERROR", ~d.status.isin(["OK", "REVIEW", "MISSING"]), n, d)
+    add("dim: lat/lon present exactly when status != MISSING", "ERROR",
+        has != (d.status != "MISSING"), n, d)
+    add("dim: lat in [-90, 90] and lon in [-180, 180]", "ERROR",
+        has & ~(d.lat.between(-90, 90) & d.lon.between(-180, 180)), n, d)
+    add("dim: no (0, 0) points", "ERROR", has & (d.lat.abs() < 1e-6) & (d.lon.abs() < 1e-6), n, d)
+    add("dim: geo_src is a known source", "ERROR", has & ~d.geo_src.isin(PRIORITY), n, d)
+    # --- geography of accepted points
+    add("OK points are inside their country", "ERROR", ok & d.outside_country.fillna(False).astype(bool), n, d)
+    add("OK points are not shared by different places", "ERROR",
+        ok & (pd.to_numeric(d.shared_point_n, errors="coerce").fillna(1) > 1), n, d)
+    add("OK points have no unresolved >50 km disagreement", "ERROR",
+        ok & d.review_reasons.fillna("").str.contains("unresolved"), n, d)
+    # --- completeness / quality (active locations)
+    add("active locations without coordinates", "WARN", act & ~has, int(act.sum()), d)
+    add("active locations to review", "WARN", act & (d.status == "REVIEW"), int(act.sum()), d)
+    add("active locations with low confidence", "WARN", act & (d.geo_conf == "low"), int(act.sum()), d)
+    rec = pd.to_numeric(d.n_records, errors="coerce").fillna(0)
+    unres = rec[act & (d.status != "OK")].sum()
+    share = unres / max(1, rec[act].sum())
+    add(f"records on REVIEW/MISSING locations <= {max_unresolved_record_share:.0%} (now {share:.2%})", "ERROR",
+        int(share > max_unresolved_record_share), 1)
+    # --- pair map
+    add("pair map: same columns as legacy Geo_Enriched", "ERROR", int(list(pair.columns) != PAIR_COLS), 1)
+    add("pair map: no rows lost or added", "ERROR", abs(len(pair) - n_pairs_in), n_pairs_in)
+    look = {(r.cc, r.loc): (r.lat, r.lon) for r in d.itertuples()}
+    mism = 0
+    for side in ("origin", "dest"):
+        for cc, loc, la, lo in zip(pair[f"{side}_loc_country_code"], pair[f"{side}_loc"], pair[f"{side}_lat"],
+                                   pair[f"{side}_lon"]):
+            ref = look.get((str(cc).strip().upper(), str(loc).strip()))
+            if ref is None or (pd.isna(ref[0]) != pd.isna(la)) or (
+                    pd.notna(la) and (abs(ref[0] - la) > 1e-9 or abs(ref[1] - lo) > 1e-9)):
+                mism += 1
+    add("pair map: every endpoint matches the dim", "ERROR", mism, 2 * len(pair))
+    no_xy = pair.origin_lat.isna() | pair.dest_lat.isna()
+    add("pair map: pairs with a missing endpoint coordinate", "WARN", int(no_xy.sum()), len(pair))
+    pk = pair[PAIR_KEY_COLS].apply(lambda c: c.astype(str).str.strip().str.upper())
+    add("pair map: duplicate pairs (after trimming)", "WARN", int(pk.duplicated().sum()), len(pair))
+    # --- incremental stability
+    if prev is not None and len(prev):
+        pkeys = set(zip(prev.cc, prev["loc"]))
+        dkeys = set(zip(d.cc, d["loc"]))
+        add("incremental: no location from the previous dim was dropped", "ERROR", len(pkeys - dkeys), len(pkeys))
+        if "change" in d:
+            kept = d[d.change == "kept"]
+            pv = prev.set_index(["cc", "loc"])[["lat", "lon"]]
+            j = kept.join(pv, on=["cc", "loc"], rsuffix="_prev")
+            moved = (j.lat - j.lat_prev).abs().gt(1e-9) | (j.lon - j.lon_prev).abs().gt(1e-9)
+            add("incremental: kept locations did not move", "ERROR", int(moved.sum()), len(kept))
+            drift = pd.to_numeric(d.recalc_drift_km, errors="coerce").fillna(0) > MAX_DISAGREE_KM
+            add("incremental: kept points that a recalculation would move > 50 km", "WARN", drift, len(kept), d)
+            upd = d.change == "updated"
+            add("incremental: previously reviewed/missing points updated", "WARN", upd, n, d)
+    return pd.DataFrame(out)
+
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Save table and CSV outputs
+# MAGIC ## Step 2: Build, merge with the previous market_map, validate
 
 # COMMAND ----------
 
-os.makedirs(OUT_DIR, exist_ok=True)
-res["dim"].to_csv(f"{OUT_DIR}/unlocode_dim.csv", index=False)
-res["pair_map"].to_csv(f"{OUT_DIR}/Geo_Enriched_rebuilt.csv", index=False)
-res["review"].to_csv(f"{OUT_DIR}/manual_review.csv", index=False)
-res["candidates"].to_csv(f"{OUT_DIR}/location_candidates.csv", index=False)
-res["manual"].to_csv(f"{OUT_DIR}/manual_overrides.csv", index=False)
-with open(f"{OUT_DIR}/validation_report.md", "w", encoding="utf-8") as f:
-    f.write(res["report"])
-
+from pyspark.sql import functions as F
 from pyspark.sql import types as T
+
+
+def path_has_data(path):
+    try:
+        return any(f.name.endswith(".parquet") for f in dbutils.fs.ls(path))
+    except Exception:
+        return False
 
 
 def to_spark(pdf):
@@ -1117,16 +1283,69 @@ def to_spark(pdf):
     return spark.createDataFrame(list(zip(*cols)), T.StructType(fields))
 
 
-sdf = to_spark(res["dim"])
+run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None  # materialised before overwrite
+print(f"mode={MODE}  previous dim: {'none (first run)' if prev is None else f'{len(prev)} rows'}")
 
-dup = sdf.groupBy("cc", "loc").count().filter("count > 1").count()
-if dup:
-    raise ValueError(f"{dup} duplicate (cc, loc) keys - not saving")
-if sdf.filter("lat IS NULL").count() > 0:
-    print("WARNING: some locations have no coordinates - see manual_review.csv")
+res = build(PATHS)
+manual_keys = {(m[0], m[1]) for m in MANUAL_OVERRIDES}
+dim = merge_incremental(res["dim"], prev, manual_keys, run_date, full_rebuild=(MODE == "full"))
+pair = _pair_map(res["pairs_in"], dim)
 
-(sdf.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE))
-print(f"saved {sdf.count()} rows to {TARGET_TABLE}")
+dq = run_dq_checks(dim, pair, len(res["pairs_in"]), prev, MAX_UNRESOLVED_RECORD_SHARE)
+dq["build_ts"], dq["mode"] = dim.build_ts.iloc[0], MODE
+display(dq)
+display(dim.groupby(["is_active", "change", "status"]).size().reset_index(name="locations"))
 
-if PAIR_MAP_TABLE:
-    to_spark(res["pair_map"]).write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(PAIR_MAP_TABLE)
+# review material is written even when the gate fails, so the failure can be fixed
+os.makedirs(OUT_DIR, exist_ok=True)
+res["review"].to_csv(f"{OUT_DIR}/manual_review.csv", index=False)
+res["candidates"].to_csv(f"{OUT_DIR}/location_candidates.csv", index=False)
+res["manual"].to_csv(f"{OUT_DIR}/manual_overrides.csv", index=False)
+dq.to_csv(f"{OUT_DIR}/dq_checks.csv", index=False)
+with open(f"{OUT_DIR}/validation_report.md", "w", encoding="utf-8") as f:
+    f.write(res["report"])
+to_spark(dq).write.mode("append").parquet(DQ_PATH)
+
+errors = dq[(dq.severity == "ERROR") & ~dq.passed]
+if len(errors):
+    raise ValueError("DQ gate failed - nothing written:\n" + errors[["check", "failed", "examples"]].to_string())
+print("DQ gate passed")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 3: Save parquet (dim, pair map, history) and the UC table
+
+# COMMAND ----------
+
+
+def save_parquet(name, path, pdf):
+    sdf = to_spark(pdf)
+    if "saveTable" in globals():  # shared pipeline helper, writes /mnt/mda-pipeline-refined/<name>
+        saveTable(name, "parquet", "overwrite", sdf)
+    else:
+        sdf.write.mode("overwrite").parquet(path)
+    back = spark.read.parquet(path).count()
+    if back != len(pdf):
+        raise ValueError(f"{path}: wrote {len(pdf)} rows, read back {back}")
+    print(f"saved {back} rows to {path}")
+    return sdf
+
+
+sdf_dim = save_parquet(DIM_TABLE_NAME, DIM_PATH, dim)
+save_parquet(PAIR_TABLE_NAME, PAIR_PATH, pair)
+
+# one snapshot per day; a rerun on the same day replaces that day only
+spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+(sdf_dim.withColumn("build_date", F.lit(run_date))
+ .write.mode("overwrite").partitionBy("build_date").parquet(HISTORY_PATH))
+
+if WRITE_UC_TABLE:
+    sdf_dim.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
+    print(f"saved {sdf_dim.count()} rows to {TARGET_TABLE}")
+
+res["dim"].to_csv(f"{OUT_DIR}/unlocode_dim_recalculated.csv", index=False)
+dim.to_csv(f"{OUT_DIR}/unlocode_dim.csv", index=False)
+pair.to_csv(f"{OUT_DIR}/Geo_Enriched_rebuilt.csv", index=False)
+print(dim[dim.is_active].change.value_counts().to_string())

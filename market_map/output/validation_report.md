@@ -1,6 +1,6 @@
 # market_map rebuild – validation report
 
-Build: 2026-11-10T13:04:16Z  ·  locations: 3,188  ·  pairs re-mapped from legacy market_map
+Build: 2026-11-13T09:59:59Z  ·  locations: 3,188  ·  pairs re-mapped from legacy market_map
 
 ## Before vs after (same checks on legacy and rebuilt points)
 
@@ -9,9 +9,9 @@ Build: 2026-11-10T13:04:16Z  ·  locations: 3,188  ·  pairs re-mapped from lega
 | has_point | 3,172 | 3,188 |
 | missing | 16 | 0 |
 | outside_country | 200 | 0 |
-| shared_point | 287 | 2 |
+| shared_point | 287 | 0 |
 | port_misplaced | 34 | 12 |
-| any_issue | 362 | 14 |
+| any_issue | 362 | 12 |
 
 Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural Earth polygon; `shared_point` = same point (~100 m) used by differently named places; `port_misplaced` = ocean port > 50 km from every port-gazetteer position, or > 40 km from the coast with no gazetteer entry.
 
@@ -19,8 +19,8 @@ Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural E
 
 | status | locations | records |
 |---|---:|---:|
-| OK | 3,170 | 891,243 |
-| REVIEW | 18 | 659 |
+| OK | 3,171 | 891,380 |
+| REVIEW | 17 | 522 |
 
 ## Coordinate source
 
@@ -42,7 +42,6 @@ Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural E
 | low_confidence | 13 |
 | unresolved_disagreement | 11 |
 | port_inland | 3 |
-| shared_point | 1 |
 
 ## Ports
 

@@ -1,8 +1,19 @@
 # market_map rebuild (consultant rate location coordinates)
 
-`../unlocode_dim.py` is the Databricks notebook that builds `cdl_mda_prod.internal_material_data_asset.unlocode_dim`
-(one validated coordinate per location) and re-maps the pair-level market_map from it.
-`run_local.py` runs the same `# CORE` cells locally; `output/` holds the result of that run.
+`../unlocode_dim.py` is the Databricks notebook that builds the location dim (one validated coordinate per
+location) and the pair-level market_map, validates both, and writes them as parquet:
+
+| path | content |
+|---|---|
+| `/mnt/mda-pipeline-refined/unlocode_dim` | location dim |
+| `/mnt/mda-pipeline-refined/market_map` | pair map, legacy `Geo_Enriched` layout |
+| `/mnt/mda-pipeline-refined/unlocode_dim_history` | dim snapshot per `build_date` |
+| `/mnt/mda-pipeline-refined/market_map_dq` | data-quality results of every run |
+| `cdl_mda_prod.internal_material_data_asset.unlocode_dim` | optional Delta copy (UC managed tables are Delta) |
+
+Modes: `incremental` (default) keeps every coordinate already accepted and only geocodes new or unresolved
+locations; `full` recomputes everything. A failed ERROR check in `run_dq_checks` stops the job before anything is
+written. `run_local.py` runs the same `# CORE` cells locally; `output/` holds a local full run.
 
 ## Outputs
 
@@ -14,6 +25,7 @@
 | `output/validation_report.md` | before/after checks, source mix, largest corrections, overrides applied |
 | `output/location_candidates.csv` | every candidate per location with validity, why it was rejected or outvoted |
 | `output/manual_overrides.csv` | the overrides in the notebook cell *Manual overrides* |
+| `output/dq_checks.csv` | data-quality checks of the run (ERROR = gate, WARN = report) |
 
 ## How a coordinate is chosen
 
@@ -30,6 +42,14 @@ China TX, Mexico City, Washington DC). The highest-priority remaining candidate 
 
 `status` is REVIEW when the result is low-confidence, an unresolved > 50 km disagreement, a point shared by different
 places, or an ocean port far from the coast that no other source confirms.
+
+## Schedule
+
+| what | when |
+|---|---|
+| `mode=incremental` job | after each consultant rate load (at least weekly); a few minutes, only new locations are geocoded |
+| work through `manual_review.csv` | weekly, together with the incremental run |
+| `mode=full, refresh_refs=true` | quarterly, and after a new UN/LOCODE release (twice a year) or a rule change; compare with the previous snapshot before accepting |
 
 ## Re-running
 

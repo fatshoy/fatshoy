@@ -1,0 +1,20 @@
+check,severity,failed,total,passed,examples
+"dim: (cc, loc) is unique",ERROR,0,3188,True,
+dim: cc is a 2-letter code,ERROR,0,3188,True,
+dim: status in OK/REVIEW/MISSING,ERROR,0,3188,True,
+dim: lat/lon present exactly when status != MISSING,ERROR,0,3188,True,
+"dim: lat in [-90, 90] and lon in [-180, 180]",ERROR,0,3188,True,
+"dim: no (0, 0) points",ERROR,0,3188,True,
+dim: geo_src is a known source,ERROR,0,3188,True,
+OK points are inside their country,ERROR,0,3188,True,
+OK points are not shared by different places,ERROR,0,3188,True,
+OK points have no unresolved >50 km disagreement,ERROR,0,3188,True,
+active locations without coordinates,WARN,0,3188,True,
+active locations to review,WARN,17,3188,False,"CA|ONTARIO, K8N 5T6; CN|CNDGY; CN|Dongqiao, 362141; CN|JIANGSU, 215434; CN|Jiangsu, 530103"
+active locations with low confidence,WARN,13,3188,False,"CA|ONTARIO, K8N 5T6; CN|Dongqiao, 362141; CN|JIANGSU, 215434; CN|Jiangsu, 530103; CN|Sichuan,  614222"
+records on REVIEW/MISSING locations <= 1% (now 0.06%),ERROR,0,1,True,
+pair map: same columns as legacy Geo_Enriched,ERROR,0,1,True,
+pair map: no rows lost or added,ERROR,0,9158,True,
+pair map: every endpoint matches the dim,ERROR,0,18316,True,
+pair map: pairs with a missing endpoint coordinate,WARN,0,9158,True,
+pair map: duplicate pairs (after trimming),WARN,27,9158,False,
