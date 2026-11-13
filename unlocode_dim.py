@@ -30,7 +30,9 @@
 # MAGIC overwritten. Results are appended to `market_map_dq`.
 # MAGIC
 # MAGIC **Inputs** (read directly): locations and lanes from `ibl_consultant_fact`, the old market_map
-# MAGIC (`Geo Enriched.parquet`), UN/LOCODE from `cdl_mda_prod.internal_material_data_asset.unlocode_dim` (read only).
+# MAGIC (`Geo Enriched.parquet`), UN/LOCODE from `<catalog>.internal_material_data_asset.unlocode_dim` (read only).
+# MAGIC Widget `catalog` picks cdl_mda_dev / cdl_mda_prod. Working files go to the volume `<catalog>.internal_material_data_asset.market_map`
+# MAGIC (created if missing), or to `/mnt/mda-pipeline-temp/market_map` when the volume is not writable.
 # MAGIC
 # MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `market_map_location_dim` (one row per location),
 # MAGIC `market_map` (pairs in the legacy `Geo_Enriched` layout), `market_map_location_dim_history` (snapshot per
@@ -55,7 +57,10 @@
 #   full        - recompute every coordinate (after reference refresh or rule changes); history is kept
 dbutils.widgets.dropdown("mode", "incremental", ["incremental", "full"])
 dbutils.widgets.dropdown("refresh_refs", "false", ["false", "true"])
+dbutils.widgets.dropdown("catalog", "cdl_mda_prod", ["cdl_mda_prod", "cdl_mda_dev"])
 MODE = dbutils.widgets.get("mode")
+CATALOG = dbutils.widgets.get("catalog")
+SCHEMA = "internal_material_data_asset"
 REFRESH_REFS = dbutils.widgets.get("refresh_refs") == "true"   # re-download GeoNames / Natural Earth / ports
 
 # Parquet outputs (same convention as the other refined tables: /mnt/mda-pipeline-refined/<name>).
@@ -70,19 +75,21 @@ DQ_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}_dq"            # data-quality resul
 
 # Optional Unity Catalog copy of the dim (UC managed tables are always Delta)
 WRITE_UC_TABLE = False
-TARGET_TABLE = "cdl_mda_prod.internal_material_data_asset.market_map_location_dim"
+TARGET_TABLE = f"{CATALOG}.{SCHEMA}.market_map_location_dim"
 
 # DQ gate: stop before writing when more than this share of rate records sits on unresolved locations
 MAX_UNRESOLVED_RECORD_SHARE = 0.01
 
-VOLUME_DIR = "/Volumes/cdl_mda_prod/internal_material_data_asset/market_map"
-REF_DIR = f"{VOLUME_DIR}/reference"   # downloaded reference data (cached)
-OUT_DIR = f"{VOLUME_DIR}/output"      # review list, report, candidates (CSV / markdown)
+# Working storage for cached reference data and CSV outputs. The volume is created if missing; when it cannot be
+# created or written, FALLBACK_DIR is used instead (see Step 1).
+VOLUME_NAME = "market_map"
+VOLUME_DIR = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME_NAME}"
+FALLBACK_DIR = "dbfs:/mnt/mda-pipeline-temp/market_map"
 
 # --- Sources (read directly, no CSV exports)
 CONSULTANT_FACT_PATH = "/mnt/mda-pipeline-refined/ibl_consultant_fact"
 LEGACY_MARKET_MAP_PATH = "/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet"
-UNLOCODE_TABLE = "cdl_mda_prod.internal_material_data_asset.unlocode_dim"
+UNLOCODE_TABLE = f"{CATALOG}.{SCHEMA}.unlocode_dim"
 PAIRS_FROM = "fact"   # "fact" = every origin/dest lane in the consultant fact; "legacy" = pairs of the old market_map
 
 SQL_LOCATIONS = f"""
@@ -144,28 +151,88 @@ OPTIONAL_REFS = {"wpi.csv", "searoute_ports.geojson", "seaports.json"}
 # COMMAND ----------
 
 import os
+import tempfile
 import urllib.request
 import zipfile
 
+# Python only touches local disk; volume / mount files go through dbutils.fs (works in every access mode)
+LOCAL_TMP = ("/local_disk0/tmp/market_map" if os.access("/local_disk0", os.W_OK)
+             else os.path.join(tempfile.gettempdir(), "market_map"))
+os.makedirs(LOCAL_TMP, exist_ok=True)
+
+
+def _first_line(e):
+    return str(e).strip().splitlines()[0][:300] if str(e).strip() else type(e).__name__
+
+
+def _exists(uri):
+    try:
+        dbutils.fs.ls(uri)
+        return True
+    except Exception:
+        return False
+
+
+def _writable(uri):
+    try:
+        dbutils.fs.mkdirs(uri)
+        dbutils.fs.put(f"{uri}/_write_probe", "ok", True)
+        dbutils.fs.rm(f"{uri}/_write_probe")
+        return True
+    except Exception as e:
+        print(f"  cannot write {uri}: {_first_line(e)}")
+        return False
+
+
+try:
+    spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME_NAME}")
+except Exception as e:
+    print(f"  cannot create volume {CATALOG}.{SCHEMA}.{VOLUME_NAME}: {_first_line(e)}")
+
+if _writable(VOLUME_DIR):
+    STORE_DIR = VOLUME_DIR
+elif _writable(FALLBACK_DIR):
+    STORE_DIR = FALLBACK_DIR
+    print(f"WARNING: volume not writable, using {FALLBACK_DIR}")
+else:
+    raise PermissionError(
+        f"No writable working storage. Either create the volume and grant write access:\n"
+        f"  CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME_NAME};\n"
+        f"  GRANT READ VOLUME, WRITE VOLUME ON VOLUME {CATALOG}.{SCHEMA}.{VOLUME_NAME} TO `<you or the job principal>`;\n"
+        f"or set FALLBACK_DIR to a path you can write.")
+REF_DIR = f"{STORE_DIR}/reference"   # downloaded reference data (cached between runs)
+OUT_DIR = f"{STORE_DIR}/output"      # review list, report, candidates (CSV / markdown)
+print(f"working storage: {STORE_DIR}")
+
 
 def _download(name, url):
-    dst = f"{REF_DIR}/{name}"
-    if os.path.exists(dst) and not REFRESH_REFS:
-        return dst
-    tmp = f"/local_disk0/tmp/{name}"
-    os.makedirs(os.path.dirname(tmp), exist_ok=True)
+    """Local copy of a reference file: from the cache when present, else downloaded (and cached)."""
+    local_path = f"{LOCAL_TMP}/{name}"
+    cached = f"{REF_DIR}/{name}"
+    if not REFRESH_REFS and _exists(cached):
+        dbutils.fs.cp(cached, f"file:{local_path}")
+        return local_path
     req = urllib.request.Request(url, headers={"User-Agent": "market-map-build"})
-    with urllib.request.urlopen(req, timeout=600) as r, open(tmp, "wb") as f:
+    with urllib.request.urlopen(req, timeout=600) as r, open(local_path, "wb") as f:
         f.write(r.read())
-    with open(tmp, "rb") as f:
+    with open(local_path, "rb") as f:
         head = f.read(200).lower()
     if b"<html" in head or b"<!doctype" in head:
         raise RuntimeError(f"{url} returned an HTML page (service unavailable?)")
-    dbutils.fs.cp(f"file:{tmp}", dst)
-    return dst
+    try:
+        dbutils.fs.cp(f"file:{local_path}", cached)
+    except Exception as e:  # caching is a convenience; the build continues
+        print(f"  not cached {name}: {_first_line(e)}")
+    return local_path
 
 
-os.makedirs(REF_DIR, exist_ok=True)
+def save_output(name, write):
+    """write(local_path) creates the file locally; it is then copied to OUT_DIR."""
+    local_path = f"{LOCAL_TMP}/out_{name}"
+    write(local_path)
+    dbutils.fs.cp(f"file:{local_path}", f"{OUT_DIR}/{name}")
+
+
 local = {}
 for name, url in REF_URLS.items():
     try:
@@ -174,9 +241,9 @@ for name, url in REF_URLS.items():
     except Exception as e:  # optional port gazetteers may be down; the build then runs without them
         if name not in OPTIONAL_REFS:
             raise
-        print(f"SKIP {name}: {e}")
+        print(f"SKIP {name}: {_first_line(e)}")
 
-unz = "/local_disk0/tmp/market_map_refs"
+unz = f"{LOCAL_TMP}/refs"
 os.makedirs(unz, exist_ok=True)
 for name in ["gn_postal_all.zip", "gn_postal_GB.zip", "gn_postal_NL.zip", "gn_postal_CA.zip", "gn_cities500.zip"]:
     zipfile.ZipFile(local[name]).extractall(unz)
@@ -1345,13 +1412,11 @@ display(dq)
 display(dim.groupby(["is_active", "change", "status"]).size().reset_index(name="locations"))
 
 # review material is written even when the gate fails, so the failure can be fixed
-os.makedirs(OUT_DIR, exist_ok=True)
-res["review"].to_csv(f"{OUT_DIR}/manual_review.csv", index=False)
-res["candidates"].to_csv(f"{OUT_DIR}/location_candidates.csv", index=False)
-res["manual"].to_csv(f"{OUT_DIR}/manual_overrides.csv", index=False)
-dq.to_csv(f"{OUT_DIR}/dq_checks.csv", index=False)
-with open(f"{OUT_DIR}/validation_report.md", "w", encoding="utf-8") as f:
-    f.write(res["report"])
+save_output("manual_review.csv", lambda p: res["review"].to_csv(p, index=False))
+save_output("location_candidates.csv", lambda p: res["candidates"].to_csv(p, index=False))
+save_output("manual_overrides.csv", lambda p: res["manual"].to_csv(p, index=False))
+save_output("dq_checks.csv", lambda p: dq.to_csv(p, index=False))
+save_output("validation_report.md", lambda p: open(p, "w", encoding="utf-8").write(res["report"]))
 to_spark(dq).write.mode("append").parquet(DQ_PATH)
 
 errors = dq[(dq.severity == "ERROR") & ~dq.passed]
@@ -1392,7 +1457,8 @@ if WRITE_UC_TABLE:
     sdf_dim.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
     print(f"saved {sdf_dim.count()} rows to {TARGET_TABLE}")
 
-res["dim"].to_csv(f"{OUT_DIR}/market_map_location_dim_recalculated.csv", index=False)
-dim.to_csv(f"{OUT_DIR}/market_map_location_dim.csv", index=False)
-pair.to_csv(f"{OUT_DIR}/Geo_Enriched_rebuilt.csv", index=False)
+save_output("market_map_location_dim_recalculated.csv", lambda p: res["dim"].to_csv(p, index=False))
+save_output("market_map_location_dim.csv", lambda p: dim.to_csv(p, index=False))
+save_output("Geo_Enriched_rebuilt.csv", lambda p: pair.to_csv(p, index=False))
+print(f"CSV outputs: {OUT_DIR}")
 print(dim[dim.is_active].change.value_counts().to_string())
