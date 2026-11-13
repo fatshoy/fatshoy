@@ -1,7 +1,7 @@
 # Databricks notebook source
 
 # MAGIC %md
-# MAGIC # UN/LOCODE location dim (market_map rebuild)
+# MAGIC # market_map: location dim and pair map (consultant rate locations)
 # MAGIC
 # MAGIC Builds one validated coordinate per consultant rate location (UN/LOCODE ports, "CITY, POSTAL" trucking
 # MAGIC points, free-text cities, Drewry port sub-codes) and re-derives the pair-level `market_map` from it.
@@ -29,10 +29,12 @@
 # MAGIC **Data-quality gate**: `run_dq_checks` runs before any write; a failed ERROR check stops the job and nothing is
 # MAGIC overwritten. Results are appended to `market_map_dq`.
 # MAGIC
-# MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `unlocode_dim` (one row per location), `market_map`
-# MAGIC (pairs in the legacy `Geo_Enriched` layout), `unlocode_dim_history` (snapshot per build_date), `market_map_dq`.
-# MAGIC Optional Delta copy in `cdl_mda_prod.internal_material_data_asset.unlocode_dim`. Review list, report and
-# MAGIC candidates go to the output volume as CSV.
+# MAGIC **Inputs** (read directly): locations and lanes from `ibl_consultant_fact`, the old market_map
+# MAGIC (`Geo Enriched.parquet`), UN/LOCODE from `cdl_mda_prod.internal_material_data_asset.unlocode_dim` (read only).
+# MAGIC
+# MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `market_map_location_dim` (one row per location),
+# MAGIC `market_map` (pairs in the legacy `Geo_Enriched` layout), `market_map_location_dim_history` (snapshot per
+# MAGIC build_date), `market_map_dq`. Review list, report and candidates go to the output volume as CSV.
 # MAGIC
 # MAGIC Cells whose first line is `# CORE` are plain Python (no Spark) so the same code runs locally
 # MAGIC (`market_map/run_local.py`).
@@ -56,9 +58,10 @@ dbutils.widgets.dropdown("refresh_refs", "false", ["false", "true"])
 MODE = dbutils.widgets.get("mode")
 REFRESH_REFS = dbutils.widgets.get("refresh_refs") == "true"   # re-download GeoNames / Natural Earth / ports
 
-# Parquet outputs (same convention as the other refined tables: /mnt/mda-pipeline-refined/<name>)
-DIM_TABLE_NAME = "unlocode_dim"            # one row per location
-PAIR_TABLE_NAME = "market_map"             # pair map, legacy Geo_Enriched layout
+# Parquet outputs (same convention as the other refined tables: /mnt/mda-pipeline-refined/<name>).
+# NOT "unlocode_dim": that name is the UN/LOCODE source table read below.
+DIM_TABLE_NAME = "market_map_location_dim"   # one row per location
+PAIR_TABLE_NAME = "market_map"               # pair map, legacy Geo_Enriched layout
 REFINED_ROOT = "/mnt/mda-pipeline-refined"
 DIM_PATH = f"{REFINED_ROOT}/{DIM_TABLE_NAME}"
 PAIR_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}"
@@ -66,22 +69,57 @@ HISTORY_PATH = f"{REFINED_ROOT}/{DIM_TABLE_NAME}_history"   # dim snapshot per b
 DQ_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}_dq"            # data-quality results per run
 
 # Optional Unity Catalog copy of the dim (UC managed tables are always Delta)
-WRITE_UC_TABLE = True
-TARGET_TABLE = "cdl_mda_prod.internal_material_data_asset.unlocode_dim"
+WRITE_UC_TABLE = False
+TARGET_TABLE = "cdl_mda_prod.internal_material_data_asset.market_map_location_dim"
 
 # DQ gate: stop before writing when more than this share of rate records sits on unresolved locations
 MAX_UNRESOLVED_RECORD_SHARE = 0.01
 
 VOLUME_DIR = "/Volumes/cdl_mda_prod/internal_material_data_asset/market_map"
 REF_DIR = f"{VOLUME_DIR}/reference"   # downloaded reference data (cached)
-IN_DIR = f"{VOLUME_DIR}/input"        # uploaded inputs
 OUT_DIR = f"{VOLUME_DIR}/output"      # review list, report, candidates (CSV / markdown)
 
-# Inputs: a /Volumes path to a CSV, or a UC table name
-CONSULTANT_LOCATIONS = f"{IN_DIR}/All_consultant_locations.csv"   # cc, loc, loc_desc, modes, sources, n_records, last_valid_to
-UNLOCODE = f"{IN_DIR}/UNLOCODE_with_coordinates.csv"
-LEGACY_MARKET_MAP = f"{IN_DIR}/Geo_Enriched.csv"                  # old pair map: source of "legacy" candidates
-PAIRS = None  # lanes to map (origin/dest cc + loc columns); None = the pairs of LEGACY_MARKET_MAP
+# --- Sources (read directly, no CSV exports)
+CONSULTANT_FACT_PATH = "/mnt/mda-pipeline-refined/ibl_consultant_fact"
+LEGACY_MARKET_MAP_PATH = "/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet"
+UNLOCODE_TABLE = "cdl_mda_prod.internal_material_data_asset.unlocode_dim"
+PAIRS_FROM = "fact"   # "fact" = every origin/dest lane in the consultant fact; "legacy" = pairs of the old market_map
+
+SQL_LOCATIONS = f"""
+SELECT cc, loc,
+       first(loc_desc, true)               AS loc_desc,
+       concat_ws('|', collect_set(mode))   AS modes,
+       concat_ws('|', collect_set(source)) AS sources,
+       count(*)                            AS n_records,
+       max(to_date(rate_valid_to))         AS last_valid_to
+FROM (
+  SELECT trim(origin_loc_country_code) AS cc, trim(origin_loc) AS loc, origin_loc_desc AS loc_desc,
+         mode, source, rate_valid_to
+  FROM parquet.`{CONSULTANT_FACT_PATH}`
+  UNION ALL
+  SELECT trim(dest_loc_country_code), trim(dest_loc), dest_loc_desc, mode, source, rate_valid_to
+  FROM parquet.`{CONSULTANT_FACT_PATH}`
+) t
+WHERE cc IS NOT NULL AND loc IS NOT NULL AND loc <> ''
+GROUP BY cc, loc
+"""
+SQL_PAIRS = f"""
+SELECT DISTINCT trim(origin_loc_country_code) AS origin_loc_country_code, trim(origin_loc) AS origin_loc,
+                trim(dest_loc_country_code)   AS dest_loc_country_code,   trim(dest_loc)   AS dest_loc
+FROM parquet.`{CONSULTANT_FACT_PATH}`
+WHERE origin_loc IS NOT NULL AND dest_loc IS NOT NULL
+"""
+SQL_LEGACY = f"SELECT * FROM parquet.`{LEGACY_MARKET_MAP_PATH}`"
+SQL_UNLOCODE = f"""
+SELECT country_code, loc_code, loc_name, subdivision, function, status, long_lat
+FROM {UNLOCODE_TABLE}
+"""
+
+# never overwrite an input
+_outputs = {DIM_PATH, PAIR_PATH, HISTORY_PATH, DQ_PATH} | ({TARGET_TABLE} if WRITE_UC_TABLE else set())
+_inputs = {CONSULTANT_FACT_PATH, LEGACY_MARKET_MAP_PATH, UNLOCODE_TABLE, f"{REFINED_ROOT}/unlocode_dim"}
+if _outputs & _inputs:
+    raise ValueError(f"output would overwrite an input: {_outputs & _inputs}")
 
 REF_URLS = {
     "gn_postal_all.zip": "https://download.geonames.org/export/zip/allCountries.zip",
@@ -144,20 +182,18 @@ for name in ["gn_postal_all.zip", "gn_postal_GB.zip", "gn_postal_NL.zip", "gn_po
     zipfile.ZipFile(local[name]).extractall(unz)
 
 
-def _input(src, name):
-    """CSV path on a volume, or a UC table exported to a local CSV."""
-    if src.startswith("/"):
-        return src
-    out = f"/local_disk0/tmp/{name}.csv"
-    spark.read.table(src).toPandas().to_csv(out, index=False)
-    return out
+inputs = {
+    "consultant": spark.sql(SQL_LOCATIONS).toPandas(),
+    "unlocode": spark.sql(SQL_UNLOCODE).toPandas(),
+    "legacy": spark.sql(SQL_LEGACY).toPandas(),
+    "pairs": spark.sql(SQL_PAIRS).toPandas() if PAIRS_FROM == "fact" else None,
+}
+for k, v in inputs.items():
+    print(f"{k:10s} {'(legacy pairs)' if v is None else f'{len(v):,} rows'}")
 
 
 PATHS = {
-    "pairs": _input(PAIRS, "pairs") if PAIRS else None,
-    "consultant": _input(CONSULTANT_LOCATIONS, "consultant"),
-    "unlocode": _input(UNLOCODE, "unlocode"),
-    "legacy": _input(LEGACY_MARKET_MAP, "legacy"),
+    **inputs,
     "gn_postal": [f"{unz}/allCountries.txt", f"{unz}/GB_full.txt", f"{unz}/NL_full.txt", f"{unz}/CA_full.txt"],
     "gn_cities": f"{unz}/cities500.txt",
     "gn_admin1": local["gn_admin1.txt"],
@@ -364,8 +400,20 @@ class Coast:
         return best
 
 
+def _frame(src):
+    """Input as all-string DataFrame: a CSV path, or a DataFrame (e.g. spark.sql(...).toPandas()). Nulls -> ''."""
+    if src is None:
+        return None
+    if isinstance(src, pd.DataFrame):
+        df = src.copy()
+        for c in df.columns:
+            df[c] = [("" if v is None or (isinstance(v, float) and math.isnan(v)) else str(v)) for v in df[c]]
+        return df
+    return pd.read_csv(src, dtype=str, keep_default_na=False)
+
+
 def load_unlocode(path):
-    u = pd.read_csv(path, dtype=str, keep_default_na=False)
+    u = _frame(path)
     out = {}
     for r in u.itertuples(index=False):
         code = (r.country_code + r.loc_code).upper()
@@ -738,7 +786,7 @@ def _identity(cc, p):
 
 def build(paths, manual=MANUAL_OVERRIDES, log=print):
     t0 = datetime.now(timezone.utc)
-    cons = pd.read_csv(paths["consultant"], dtype=str, keep_default_na=False)
+    cons = _frame(paths["consultant"])
     cons["cc"] = cons["cc"].str.strip().str.upper()
     cons["loc_key"] = cons["loc"].str.strip()
     # rows that differ only by surrounding whitespace are one location
@@ -747,12 +795,11 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
             .groupby(["cc", "loc_key"], as_index=False, sort=False)
             .agg(loc=("loc_key", "first"), loc_desc=("loc_desc", "first"), modes=("modes", union),
                  sources=("sources", union), n_records=("n_records", "sum"), last_valid_to=("last_valid_to", "max")))
-    leg = pd.read_csv(paths["legacy"], dtype=str, keep_default_na=False)
+    leg = _frame(paths["legacy"])
     for s_ in ("origin", "dest"):
         leg[f"{s_}_loc_country_code"] = leg[f"{s_}_loc_country_code"].str.strip().str.upper()
     # pairs to map: a separate source when given (new lanes), else the legacy pair map itself
-    pairs_raw = (pd.read_csv(paths["pairs"], dtype=str, keep_default_na=False)
-                 if paths.get("pairs") else pd.read_csv(paths["legacy"], dtype=str, keep_default_na=False))
+    pairs_raw = _frame(paths["pairs"]) if paths.get("pairs") is not None else _frame(paths["legacy"])
     pairs_raw = pairs_raw[PAIR_KEY_COLS].copy()  # output keeps the key values exactly as they came
     pn = pairs_raw.copy()
     for s_ in ("origin", "dest"):
@@ -1345,7 +1392,7 @@ if WRITE_UC_TABLE:
     sdf_dim.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
     print(f"saved {sdf_dim.count()} rows to {TARGET_TABLE}")
 
-res["dim"].to_csv(f"{OUT_DIR}/unlocode_dim_recalculated.csv", index=False)
-dim.to_csv(f"{OUT_DIR}/unlocode_dim.csv", index=False)
+res["dim"].to_csv(f"{OUT_DIR}/market_map_location_dim_recalculated.csv", index=False)
+dim.to_csv(f"{OUT_DIR}/market_map_location_dim.csv", index=False)
 pair.to_csv(f"{OUT_DIR}/Geo_Enriched_rebuilt.csv", index=False)
 print(dim[dim.is_active].change.value_counts().to_string())

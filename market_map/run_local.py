@@ -52,7 +52,7 @@ def main():
     dq = core["run_dq_checks"](dim, pair, len(res["pairs_in"]), prev, a.max_unresolved_share)
 
     os.makedirs(a.out, exist_ok=True)
-    dim.to_csv(f"{a.out}/unlocode_dim.csv", index=False)
+    dim.to_csv(f"{a.out}/market_map_location_dim.csv", index=False)
     pair.to_csv(f"{a.out}/Geo_Enriched_rebuilt.csv", index=False)
     res["review"].to_csv(f"{a.out}/manual_review.csv", index=False)
     res["candidates"].to_csv(f"{a.out}/location_candidates.csv", index=False)

@@ -5,11 +5,15 @@ location) and the pair-level market_map, validates both, and writes them as parq
 
 | path | content |
 |---|---|
-| `/mnt/mda-pipeline-refined/unlocode_dim` | location dim |
+| `/mnt/mda-pipeline-refined/market_map_location_dim` | location dim |
 | `/mnt/mda-pipeline-refined/market_map` | pair map, legacy `Geo_Enriched` layout |
-| `/mnt/mda-pipeline-refined/unlocode_dim_history` | dim snapshot per `build_date` |
+| `/mnt/mda-pipeline-refined/market_map_location_dim_history` | dim snapshot per `build_date` |
 | `/mnt/mda-pipeline-refined/market_map_dq` | data-quality results of every run |
-| `cdl_mda_prod.internal_material_data_asset.unlocode_dim` | optional Delta copy (UC managed tables are Delta) |
+| `cdl_mda_prod.internal_material_data_asset.market_map_location_dim` | optional Delta copy (off by default) |
+
+Inputs are read directly: locations and lanes from `/mnt/mda-pipeline-refined/ibl_consultant_fact`, the old map from
+`/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet`, UN/LOCODE from
+`cdl_mda_prod.internal_material_data_asset.unlocode_dim` (read only - the notebook refuses to write to any input).
 
 Modes: `incremental` (default) keeps every coordinate already accepted and only geocodes new or unresolved
 locations; `full` recomputes everything. A failed ERROR check in `run_dq_checks` stops the job before anything is
@@ -19,7 +23,7 @@ written. `run_local.py` runs the same `# CORE` cells locally; `output/` holds a 
 
 | file | content |
 |---|---|
-| `output/unlocode_dim.csv` | location dim: chosen `lat`/`lon`, `geo_src`, `geo_conf`, `status`, every candidate (`cand_*`), validation flags, legacy point and how far it moved |
+| `output/market_map_location_dim.csv` | location dim: chosen `lat`/`lon`, `geo_src`, `geo_conf`, `status`, every candidate (`cand_*`), validation flags, legacy point and how far it moved |
 | `output/Geo_Enriched_rebuilt.csv` | pair map in the legacy `Geo_Enriched` format (same rows and keys, new coordinates; `*_geo_src` holds the new source names) |
 | `output/manual_review.csv` | locations with status REVIEW, the reason, a suggested action and all candidates |
 | `output/validation_report.md` | before/after checks, source mix, largest corrections, overrides applied |
@@ -53,8 +57,7 @@ places, or an ocean port far from the coast that no other source confirms.
 
 ## Re-running
 
-Databricks: upload the three inputs to `/Volumes/cdl_mda_prod/internal_material_data_asset/market_map/input/`
-(or point the config at tables) and run the notebook. Reference data is downloaded once into `.../reference/`.
+Databricks: run the notebook; reference data is downloaded once into the volume `.../market_map/reference/`.
 
 Locally:
 
