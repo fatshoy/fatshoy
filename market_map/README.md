@@ -14,9 +14,19 @@ Inputs are read directly: locations and lanes from `/mnt/mda-pipeline-refined/ib
 `/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet`, UN/LOCODE from
 `cdl_mda_prod.internal_material_data_asset.unlocode_dim` (read only - the notebook refuses to write to any input).
 
-Modes: `incremental` (default) keeps every coordinate already accepted and only geocodes new or unresolved
-locations; `full` recomputes everything. A failed ERROR check in `run_dq_checks` stops the job before anything is
-written. `run_local.py` runs the same `# CORE` cells locally; `output/` holds a local full run.
+The notebook runs on a schedule on dev and prod without parameters: `catalog` comes from the standard
+`%run "../../utilities/DQConfig"`. On every trigger it reads its inputs and its own previous output and picks:
+
+| action | when | what it does |
+|---|---|---|
+| `FULL` | no previous output, `BUILD_VERSION` changed, or last FULL is 90+ days old | download reference data, recompute and accept every coordinate |
+| `INCREMENTAL` | new locations or changed `MANUAL_OVERRIDES` | download reference data, geocode new / unresolved locations, keep accepted coordinates |
+| `REMAP` | only new or removed lanes / locations or changed record counts | no downloads; refresh metadata, rebuild the pair map |
+| `SKIP` | nothing changed | exit without writing |
+
+The result is returned with `dbutils.notebook.exit` (visible in the job run). A failed ERROR check in
+`run_dq_checks` fails the job before anything is written. Bump `BUILD_VERSION` when the coordinate logic changes.
+`run_local.py` runs the same `# CORE` cells locally; `output/` holds a local full run.
 
 ## Outputs
 
@@ -48,15 +58,13 @@ places, or an ocean port far from the coast that no other source confirms.
 
 ## Schedule
 
-| what | when |
-|---|---|
-| `mode=incremental` job | after each consultant rate load (at least weekly); a few minutes, only new locations are geocoded |
-| work through `manual_review.csv` | weekly, together with the incremental run |
-| `mode=full` | quarterly, and after a new UN/LOCODE release (twice a year) or a rule change; compare with the previous snapshot before accepting |
+Trigger it as often as the orchestration likes (daily is fine): most runs are `SKIP` or `REMAP` and take seconds.
+Work through `manual_review.csv` (in `/mnt/mda-pipeline-temp/market_map/`) weekly; a fix is a line in
+`MANUAL_OVERRIDES`, which makes the next run `INCREMENTAL`.
 
 ## Re-running
 
-Databricks: run the notebook (widgets `catalog`, `mode`). Reference data (about 50 MB) is downloaded on every run into a private temporary folder; CSV reports go to `/mnt/mda-pipeline-temp/market_map`.
+Databricks: run the notebook (no parameters). Reference data (about 50 MB) is downloaded on every run into a private temporary folder; CSV reports go to `/mnt/mda-pipeline-temp/market_map`.
 
 Locally:
 

@@ -21,22 +21,27 @@
 # MAGIC - source disagreement > 50 km (a candidate with no support is dropped when ≥2 other independent sources agree elsewhere)
 # MAGIC - ocean ports > 40 km from the coast without a port-gazetteer confirmation
 # MAGIC
-# MAGIC **Modes** (widget `mode`)
-# MAGIC - `incremental` (default, scheduled): coordinates already accepted (status OK) are frozen; only new locations,
-# MAGIC   previous REVIEW/MISSING and manual overrides are (re)computed. Locations no longer used get `is_active = false`.
-# MAGIC - `full`: every coordinate is recomputed (after a reference-data refresh or a rule change).
+# MAGIC **Runs on a schedule (dev and prod), no parameters.** dev/prod comes from `catalog` of the standard
+# MAGIC `DQConfig`. On every trigger the notebook reads its inputs and its own previous output and picks:
+# MAGIC - `FULL` – no previous output, `BUILD_VERSION` changed, or the last full run is 90+ days old:
+# MAGIC   download reference data, recompute and accept every coordinate;
+# MAGIC - `INCREMENTAL` – new locations or changed `MANUAL_OVERRIDES`: download reference data, geocode new and
+# MAGIC   unresolved locations, keep every coordinate already accepted;
+# MAGIC - `REMAP` – only new lanes between known locations or changed record counts: no downloads, refresh location
+# MAGIC   metadata and rebuild the pair map;
+# MAGIC - `SKIP` – nothing changed: exit without writing.
+# MAGIC The result is returned with `dbutils.notebook.exit`, e.g. `INCREMENTAL: 3 new locations ...`.
 # MAGIC
 # MAGIC **Data-quality gate**: `run_dq_checks` runs before any write; a failed ERROR check stops the job and nothing is
 # MAGIC overwritten. Results are appended to `market_map_dq`.
 # MAGIC
 # MAGIC **Inputs** (read directly): locations and lanes from `ibl_consultant_fact`, the old market_map
 # MAGIC (`Geo Enriched.parquet`), UN/LOCODE from `<catalog>.internal_material_data_asset.unlocode_dim` (read only).
-# MAGIC Widget `catalog` picks cdl_mda_dev / cdl_mda_prod. Reference data is downloaded on every run into a private
-# MAGIC temporary folder (about 50 MB).
+# MAGIC Reference data (about 50 MB) is downloaded only for FULL / INCREMENTAL, into a private temporary folder.
 # MAGIC
 # MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `market_map_location_dim` (one row per location),
-# MAGIC `market_map` (pairs in the legacy `Geo_Enriched` layout), `market_map_location_dim_history` (snapshot per
-# MAGIC build_date), `market_map_dq`. Review list, report and candidates go to `/mnt/mda-pipeline-temp/market_map` as CSV.
+# MAGIC `market_map` (pairs in the legacy `Geo_Enriched` layout), `market_map_location_dim_history` (every run,
+# MAGIC appended), `market_map_dq`. Review list, report and candidates go to `/mnt/mda-pipeline-temp/market_map` as CSV.
 # MAGIC
 # MAGIC Cells whose first line is `# CORE` are plain Python (no Spark) so the same code runs locally
 # MAGIC (`market_map/run_local.py`).
@@ -47,19 +52,25 @@
 
 # COMMAND ----------
 
+# MAGIC %run "../../utilities/DQConfig"
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Configuration
 
 # COMMAND ----------
 
-# Run mode (job parameter):
-#   incremental - keep every coordinate already accepted (status OK), geocode only new / unresolved locations
-#   full        - recompute every coordinate (after reference refresh or rule changes); history is kept
-dbutils.widgets.dropdown("mode", "incremental", ["incremental", "full"])
-dbutils.widgets.dropdown("catalog", "cdl_mda_prod", ["cdl_mda_prod", "cdl_mda_dev"])
-MODE = dbutils.widgets.get("mode")
-CATALOG = dbutils.widgets.get("catalog")
+# dev / prod: `catalog` is set by the standard %run "../../utilities/DQConfig"
+if "catalog" not in globals():
+    raise RuntimeError('`catalog` is not defined - run %run "../../utilities/DQConfig" first')
+CATALOG = catalog
 SCHEMA = "internal_material_data_asset"
+
+# Run mode is chosen automatically (Step 1a). Bump BUILD_VERSION whenever the coordinate logic changes:
+# the next run is then FULL. A FULL run also happens when the last one is FULL_EVERY_DAYS old.
+BUILD_VERSION = "2026.11.16"
+FULL_EVERY_DAYS = 90
 
 # Parquet outputs (same convention as the other refined tables: /mnt/mda-pipeline-refined/<name>).
 # NOT "unlocode_dim": that name is the UN/LOCODE source table read below.
@@ -137,90 +148,6 @@ REF_URLS = {
     "seaports.json": "https://raw.githubusercontent.com/marchah/sea-ports/master/lib/ports.json",
 }
 OPTIONAL_REFS = {"wpi.csv", "searoute_ports.geojson", "seaports.json"}
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Step 1: Reference data and inputs
-# MAGIC ### Step 1a: Download and unpack reference files
-
-# COMMAND ----------
-
-import os
-import tempfile
-import time
-import urllib.request
-import zipfile
-
-# A new private folder on every run. A fixed path such as /tmp/market_map fails on shared clusters,
-# where each session runs as its own Linux user and cannot write into a folder an earlier session created.
-WORK_DIR = tempfile.mkdtemp(prefix="market_map_")
-
-local, errors = {}, {}
-for name, url in REF_URLS.items():
-    path = f"{WORK_DIR}/{name}"
-    for attempt in (1, 2, 3):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "market-map-build"})
-            with urllib.request.urlopen(req, timeout=600) as r, open(path, "wb") as f:
-                f.write(r.read())
-            local[name] = path
-            break
-        except Exception as e:
-            errors[name] = str(e)[:200]
-            if name in OPTIONAL_REFS:
-                break
-            time.sleep(5 * attempt)
-    status = "ok  " if name in local else ("SKIP" if name in OPTIONAL_REFS else "FAIL")
-    print(f"{status} {name}" + ("" if name in local else f": {errors[name]}"))
-
-missing = [n for n in REF_URLS if n not in local and n not in OPTIONAL_REFS]
-if missing:
-    raise RuntimeError(f"Could not download required reference files: {missing} - check the cluster's internet access")
-
-for name in ["gn_postal_all.zip", "gn_postal_GB.zip", "gn_postal_NL.zip", "gn_postal_CA.zip", "gn_cities500.zip"]:
-    zipfile.ZipFile(local[name]).extractall(WORK_DIR)
-unz = WORK_DIR
-print(f"reference files in {WORK_DIR}")
-
-
-def save_output(name, text):
-    """Write a CSV / markdown text file to OUT_DIR."""
-    dbutils.fs.put(f"{OUT_DIR}/{name}", text, True)
-
-
-# COMMAND ----------
-
-# MAGIC ### Step 1b: Read the inputs
-
-# COMMAND ----------
-
-inputs = {
-    "consultant": spark.sql(SQL_LOCATIONS).toPandas(),
-    "unlocode": spark.sql(SQL_UNLOCODE).toPandas(),
-    "legacy": spark.sql(SQL_LEGACY).toPandas(),
-    "pairs": spark.sql(SQL_PAIRS).toPandas() if PAIRS_FROM == "fact" else None,
-}
-for k, v in inputs.items():
-    print(f"{k:10s} {'(legacy pairs)' if v is None else f'{len(v):,} rows'}")
-
-
-for k in ("consultant", "unlocode", "legacy"):
-    if inputs[k] is None or len(inputs[k]) == 0:
-        raise RuntimeError(f"input '{k}' is empty - check the source query in Configuration")
-
-PATHS = {
-    **inputs,
-    "gn_postal": [f"{unz}/allCountries.txt", f"{unz}/GB_full.txt", f"{unz}/NL_full.txt", f"{unz}/CA_full.txt"],
-    "gn_cities": f"{unz}/cities500.txt",
-    "gn_admin1": local["gn_admin1.txt"],
-    "ne_admin0": local["ne_admin0.geojson"],
-    "ne_coast": local["ne_coastline.geojson"],
-    "wpi": local.get("wpi.csv"),
-    "searoute": local.get("searoute_ports.geojson"),
-    "seaports": local.get("seaports.json"),
-}
-print("Step 1 complete - inputs and reference files ready")
 
 # COMMAND ----------
 
@@ -822,8 +749,8 @@ def _identity(cc, p):
     return frozenset(labels or {f"RAW:{cc}"})
 
 
-def build(paths, manual=MANUAL_OVERRIDES, log=print):
-    t0 = datetime.now(timezone.utc)
+def prepare_locations(paths, log=print):
+    """Consultant locations (one row per trimmed cc, loc) plus pair endpoints missing from them, and the pairs."""
     cons = _frame(paths["consultant"])
     cons["cc"] = cons["cc"].str.strip().str.upper()
     cons["loc_key"] = cons["loc"].str.strip()
@@ -833,9 +760,6 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
             .groupby(["cc", "loc_key"], as_index=False, sort=False)
             .agg(loc=("loc_key", "first"), loc_desc=("loc_desc", "first"), modes=("modes", union),
                  sources=("sources", union), n_records=("n_records", "sum"), last_valid_to=("last_valid_to", "max")))
-    leg = _frame(paths["legacy"])
-    for s_ in ("origin", "dest"):
-        leg[f"{s_}_loc_country_code"] = leg[f"{s_}_loc_country_code"].str.strip().str.upper()
     # pairs to map: a separate source when given (new lanes), else the legacy pair map itself
     pairs_raw = _frame(paths["pairs"]) if paths.get("pairs") is not None else _frame(paths["legacy"])
     pairs_raw = pairs_raw[PAIR_KEY_COLS].copy()  # output keeps the key values exactly as they came
@@ -853,6 +777,15 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
         extra = extra.assign(loc=extra.loc_key, loc_desc="null", modes="", sources="pairs_only", n_records=0,
                              last_valid_to="")
         cons = pd.concat([cons, extra[cons.columns]], ignore_index=True)
+    return cons, pairs_raw
+
+
+def build(paths, manual=MANUAL_OVERRIDES, log=print):
+    t0 = datetime.now(timezone.utc)
+    cons, pairs_raw = prepare_locations(paths, log)
+    leg = _frame(paths["legacy"])
+    for s_ in ("origin", "dest"):
+        leg[f"{s_}_loc_country_code"] = leg[f"{s_}_loc_country_code"].str.strip().str.upper()
     manual_by = {(m[0], m[1]): m for m in manual}
     ccs = set(cons.cc) | {m[4] for m in manual if m[4]}
     ccs |= {a for c in list(ccs) for a in COUNTRY_ALIASES.get(c, [])}
@@ -1255,6 +1188,93 @@ def merge_incremental(new, prev, manual_keys, run_date, full_rebuild=False):
     return new
 
 
+META_COLS = ["loc_desc", "modes", "sources", "n_records", "last_valid_to"]  # refreshed without geocoding
+
+
+def overrides_hash(manual):
+    import hashlib
+    return hashlib.sha256(repr(sorted(manual, key=repr)).encode("utf-8")).hexdigest()[:16]
+
+
+def _norm_val(v):
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return ""
+    if isinstance(v, (int, np.integer)) or (isinstance(v, (float, np.floating)) and float(v).is_integer()):
+        return str(int(v))
+    return str(v)
+
+
+def _meta(df):
+    return {(r["cc"], r["loc"]): tuple(_norm_val(r.get(c)) for c in META_COLS) for r in df.to_dict("records")}
+
+
+def _pair_keys(df):
+    return set(map(tuple, df[PAIR_KEY_COLS].astype(str).values)) if df is not None else None
+
+
+def decide(locs, pairs_in, prev, prev_pairs, ov_hash, run_date, build_version, full_every_days):
+    """FULL / INCREMENTAL / REMAP / SKIP from the inputs and the previous output only (no downloads)."""
+    if prev is None or len(prev) == 0:
+        return "FULL", "first run (no previous market_map_location_dim)"
+    old_version = str(prev["build_version"].iloc[0]) if "build_version" in prev else "none"
+    if old_version != build_version:
+        return "FULL", f"BUILD_VERSION changed ({old_version} -> {build_version})"
+    last_full = prev["last_full_date"].dropna().astype(str).max() if "last_full_date" in prev else None
+    if not last_full:
+        return "FULL", "no last_full_date in the previous output"
+    age = (datetime.strptime(run_date, "%Y-%m-%d") - datetime.strptime(last_full[:10], "%Y-%m-%d")).days
+    if age >= full_every_days:
+        return "FULL", f"last FULL run {last_full[:10]} is {age} days old (>= {full_every_days})"
+    old_hash = str(prev["overrides_hash"].iloc[0]) if "overrides_hash" in prev else ""
+    if old_hash != ov_hash:
+        return "INCREMENTAL", "MANUAL_OVERRIDES changed"
+    new = set(zip(locs.cc, locs["loc"])) - set(zip(prev.cc, prev["loc"]))
+    if new:
+        ex = ", ".join(f"{c}|{l}" for c, l in sorted(new)[:5])
+        return "INCREMENTAL", f"{len(new)} new locations ({ex}{', ...' if len(new) > 5 else ''})"
+    reasons = []
+    if _pair_keys(pairs_in) != _pair_keys(prev_pairs):
+        reasons.append("pairs changed")
+    active_prev = prev[prev["is_active"].fillna(True).astype(bool)] if "is_active" in prev else prev
+    if set(zip(active_prev.cc, active_prev["loc"])) != set(zip(locs.cc, locs["loc"])):
+        reasons.append("locations no longer used")
+    cur_meta, old_meta = _meta(locs), _meta(prev)
+    changed = sum(1 for k, v in cur_meta.items() if old_meta.get(k) != v)
+    if changed:
+        reasons.append(f"metadata of {changed} locations changed")
+    if reasons:
+        return "REMAP", "; ".join(reasons)
+    return "SKIP", "no new locations, pairs or metadata changes"
+
+
+def remap_dim(prev, locs, run_date):
+    """Previous dim with refreshed metadata and is_active; coordinates untouched (no new locations by definition)."""
+    d = prev.copy().reset_index(drop=True)
+    cur = {(r["cc"], r["loc"]): r for r in locs.to_dict("records")}
+    for i, r in d.iterrows():
+        k = (r["cc"], r["loc"])
+        if k in cur:
+            for c in META_COLS:
+                d.at[i, c] = cur[k][c]
+    d["is_active"] = [(c, l) in cur for c, l in zip(d.cc, d["loc"])]
+    d["change"] = np.where(d.is_active, "kept", "inactive")
+    d["recalc_drift_km"] = np.nan
+    return d
+
+
+def stamp_dim(dim, prev, action, run_date, build_version, ov_hash):
+    """Run state stored in the dim; the next run decides from it."""
+    dim = dim.copy()
+    last_full = run_date if action == "FULL" else (
+        prev["last_full_date"].dropna().astype(str).max() if prev is not None and "last_full_date" in prev else run_date)
+    dim["build_mode"] = action
+    dim["build_version"] = build_version
+    dim["overrides_hash"] = ov_hash
+    dim["last_full_date"] = last_full
+    dim["build_ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dim
+
+
 def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=0.01):
     """Data-quality gate. ERROR checks must pass before anything is written; WARN checks are reported."""
     out = []
@@ -1335,7 +1355,8 @@ def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 2: Build, merge with the previous market_map, validate
+# MAGIC ## Step 1: Read inputs and decide FULL / INCREMENTAL / REMAP / SKIP
+# MAGIC ### Step 1a: Inputs, previous output, decision (no downloads)
 
 # COMMAND ----------
 
@@ -1370,34 +1391,133 @@ def to_spark(pdf):
     return spark.createDataFrame(list(zip(*cols)), T.StructType(fields))
 
 
-if "PATHS" not in globals() or "build" not in globals():
-    raise RuntimeError("Run all cells above first: Step 1 (1a, 1b) and the Core cells")
+def save_output(name, text):
+    """Write a CSV / markdown text file to OUT_DIR."""
+    dbutils.fs.put(f"{OUT_DIR}/{name}", text, True)
+
+
+inputs = {
+    "consultant": spark.sql(SQL_LOCATIONS).toPandas(),
+    "unlocode": spark.sql(SQL_UNLOCODE).toPandas(),
+    "legacy": spark.sql(SQL_LEGACY).toPandas(),
+    "pairs": spark.sql(SQL_PAIRS).toPandas() if PAIRS_FROM == "fact" else None,
+}
+for k, v in inputs.items():
+    print(f"{k:10s} {'(legacy pairs)' if v is None else f'{len(v):,} rows'}")
+for k in ("consultant", "unlocode", "legacy"):
+    if inputs[k] is None or len(inputs[k]) == 0:
+        raise RuntimeError(f"input '{k}' is empty - check the source query in Configuration")
+
+# previous output, materialised before anything is overwritten
+prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None
+prev_pairs = spark.read.parquet(PAIR_PATH).toPandas() if path_has_data(PAIR_PATH) else None
 
 run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None  # materialised before overwrite
-print(f"mode={MODE}  previous dim: {'none (first run)' if prev is None else f'{len(prev)} rows'}")
+LOCS, PAIRS_IN = prepare_locations(inputs)
+OV_HASH = overrides_hash(MANUAL_OVERRIDES)
+ACTION, REASON = decide(LOCS, PAIRS_IN, prev, prev_pairs, OV_HASH, run_date, BUILD_VERSION, FULL_EVERY_DAYS)
+print(f"\n>>> {ACTION}: {REASON}")
 
-res = build(PATHS)
+if ACTION == "SKIP":
+    dbutils.notebook.exit(f"SKIP: {REASON}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Step 1b: Download reference files (FULL / INCREMENTAL only)
+
+# COMMAND ----------
+
+import os
+import tempfile
+import time
+import urllib.request
+import zipfile
+
+PATHS = None
+if ACTION in ("FULL", "INCREMENTAL"):
+    # A new private folder on every run. A fixed path such as /tmp/market_map fails on shared clusters,
+    # where each session runs as its own Linux user and cannot write into a folder an earlier session created.
+    WORK_DIR = tempfile.mkdtemp(prefix="market_map_")
+    local, errors = {}, {}
+    for name, url in REF_URLS.items():
+        path = f"{WORK_DIR}/{name}"
+        for attempt in (1, 2, 3):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "market-map-build"})
+                with urllib.request.urlopen(req, timeout=600) as r, open(path, "wb") as f:
+                    f.write(r.read())
+                local[name] = path
+                break
+            except Exception as e:
+                errors[name] = str(e)[:200]
+                if name in OPTIONAL_REFS:
+                    break
+                time.sleep(5 * attempt)
+        status = "ok  " if name in local else ("SKIP" if name in OPTIONAL_REFS else "FAIL")
+        print(f"{status} {name}" + ("" if name in local else f": {errors[name]}"))
+
+    missing = [n for n in REF_URLS if n not in local and n not in OPTIONAL_REFS]
+    if missing:
+        raise RuntimeError(f"Could not download required reference files: {missing} - check the cluster's internet access")
+    for name in ["gn_postal_all.zip", "gn_postal_GB.zip", "gn_postal_NL.zip", "gn_postal_CA.zip", "gn_cities500.zip"]:
+        zipfile.ZipFile(local[name]).extractall(WORK_DIR)
+
+    PATHS = {
+        **inputs,
+        "gn_postal": [f"{WORK_DIR}/{f}" for f in ("allCountries.txt", "GB_full.txt", "NL_full.txt", "CA_full.txt")],
+        "gn_cities": f"{WORK_DIR}/cities500.txt",
+        "gn_admin1": local["gn_admin1.txt"],
+        "ne_admin0": local["ne_admin0.geojson"],
+        "ne_coast": local["ne_coastline.geojson"],
+        "wpi": local.get("wpi.csv"),
+        "searoute": local.get("searoute_ports.geojson"),
+        "seaports": local.get("seaports.json"),
+    }
+    print(f"reference files in {WORK_DIR}")
+else:
+    print(f"{ACTION}: reference files not needed")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 2: Build or remap, validate
+
+# COMMAND ----------
+
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
+
+if "ACTION" not in globals() or "build" not in globals():
+    raise RuntimeError("Run all cells above first (Core cells and Step 1)")
+
+res = None
 manual_keys = {(m[0], m[1]) for m in MANUAL_OVERRIDES}
-dim = merge_incremental(res["dim"], prev, manual_keys, run_date, full_rebuild=(MODE == "full"))
-pair = _pair_map(res["pairs_in"], dim)
+if ACTION in ("FULL", "INCREMENTAL"):
+    res = build(PATHS)
+    dim = merge_incremental(res["dim"], prev, manual_keys, run_date, full_rebuild=(ACTION == "FULL"))
+else:  # REMAP
+    dim = remap_dim(prev, LOCS, run_date)
+dim = stamp_dim(dim, prev, ACTION, run_date, BUILD_VERSION, OV_HASH)
+pair = _pair_map(PAIRS_IN, dim)
 
-dq = run_dq_checks(dim, pair, len(res["pairs_in"]), prev, MAX_UNRESOLVED_RECORD_SHARE)
-dq["build_ts"], dq["mode"] = dim.build_ts.iloc[0], MODE
+dq = run_dq_checks(dim, pair, len(PAIRS_IN), prev, MAX_UNRESOLVED_RECORD_SHARE)
+dq["build_ts"], dq["mode"] = dim.build_ts.iloc[0], ACTION
 display(dq)
 display(dim.groupby(["is_active", "change", "status"]).size().reset_index(name="locations"))
 
 # review material is written even when the gate fails, so the failure can be fixed
-save_output("manual_review.csv", res["review"].to_csv(index=False))
-save_output("location_candidates.csv", res["candidates"].to_csv(index=False))
-save_output("manual_overrides.csv", res["manual"].to_csv(index=False))
+review = res["review"] if res else dim[dim.is_active & (dim.status != "OK")]
+save_output("manual_review.csv", review.to_csv(index=False))
 save_output("dq_checks.csv", dq.to_csv(index=False))
-save_output("validation_report.md", res["report"])
+if res:
+    save_output("location_candidates.csv", res["candidates"].to_csv(index=False))
+    save_output("manual_overrides.csv", res["manual"].to_csv(index=False))
+    save_output("validation_report.md", res["report"])
 saveTable(DQ_TABLE_NAME, "parquet", "append", to_spark(dq))
 
-errors = dq[(dq.severity == "ERROR") & ~dq.passed]
-if len(errors):
-    raise ValueError("DQ gate failed - nothing written:\n" + errors[["check", "failed", "examples"]].to_string())
+dq_errors = dq[(dq.severity == "ERROR") & ~dq.passed]
+if len(dq_errors):
+    raise ValueError("DQ gate failed - nothing written:\n" + dq_errors[["check", "failed", "examples"]].to_string())
 print("DQ gate passed")
 
 # COMMAND ----------
@@ -1429,8 +1549,15 @@ save_checked(PAIR_TABLE_NAME, PAIR_PATH, pair)          # market_map
 saveTable(HISTORY_TABLE_NAME, "parquet", "append", sdf_dim.withColumn("build_date", F.lit(run_date)))
 print(f"appended {len(dim)} rows to {HISTORY_PATH}")
 
-save_output("market_map_location_dim_recalculated.csv", res["dim"].to_csv(index=False))
+if res:
+    save_output("market_map_location_dim_recalculated.csv", res["dim"].to_csv(index=False))
 save_output("market_map_location_dim.csv", dim.to_csv(index=False))
 save_output("Geo_Enriched_rebuilt.csv", pair.to_csv(index=False))
 print(f"CSV outputs: {OUT_DIR}")
-print(dim[dim.is_active].change.value_counts().to_string())
+act = dim[dim.is_active]
+counts = act.change.value_counts().to_dict()
+summary = (f"{ACTION}: {REASON} | locations {len(act)} (new {counts.get('new', 0)}, updated {counts.get('updated', 0)}, "
+           f"kept {counts.get('kept', 0) + counts.get('unchanged', 0)}), pairs {len(pair)}, "
+           f"review {int((act.status != 'OK').sum())}, DQ errors 0")
+print(summary)
+dbutils.notebook.exit(summary)
