@@ -1,6 +1,6 @@
 # market_map rebuild – validation report
 
-Build: 2026-11-13T09:59:59Z  ·  locations: 3,188  ·  pairs re-mapped from legacy market_map
+Build: 2026-11-16T10:43:05Z  ·  locations: 3,188  ·  pairs re-mapped from legacy market_map
 
 ## Before vs after (same checks on legacy and rebuilt points)
 
@@ -19,29 +19,28 @@ Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural E
 
 | status | locations | records |
 |---|---:|---:|
-| OK | 3,171 | 891,380 |
-| REVIEW | 17 | 522 |
+| OK | 3,187 | 891,886 |
+| REVIEW | 1 | 16 |
 
 ## Coordinate source
 
 | geo_src | high | medium | low | total |
 |---|---:|---:|---:|---:|
-| manual | 21 | 0 | 0 | 21 |
+| manual | 37 | 0 | 0 | 37 |
 | unlocode | 232 | 2 | 0 | 234 |
 | searoute | 139 | 3 | 0 | 142 |
 | seaports | 7 | 1 | 0 | 8 |
-| legacy | 2,428 | 17 | 3 | 2,448 |
-| postal | 150 | 6 | 5 | 161 |
-| postal_prefix | 0 | 96 | 5 | 101 |
-| city | 0 | 73 | 0 | 73 |
+| legacy | 2,428 | 17 | 0 | 2,445 |
+| postal | 150 | 6 | 0 | 156 |
+| postal_prefix | 0 | 95 | 1 | 96 |
+| city | 0 | 70 | 0 | 70 |
 
 ## Review reasons
 
 | reason | locations |
 |---|---:|
-| low_confidence | 13 |
-| unresolved_disagreement | 11 |
-| port_inland | 3 |
+| unresolved_disagreement | 1 |
+| low_confidence | 1 |
 
 ## Ports
 
@@ -53,10 +52,10 @@ Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural E
 
 | moved | locations |
 |---|---:|
-| 0–1 km | 2,499 |
+| 0–1 km | 2,498 |
 | 1–10 km | 274 |
 | 10–50 km | 40 |
-| 50–500 km | 96 |
+| 50–500 km | 97 |
 | 500–∞ km | 263 |
 
 ### Largest corrections (moved ≥ 50 km, top 40 by records)
@@ -91,8 +90,8 @@ Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural E
 | GB | GRAYS, RM17 5DU | postal | 280 | postal | shared |
 | GB | CASTLEFORD, WF10 2JT | postal | 264 | postal | shared |
 | BZ | BZBZE | locode_dict | 67 | searoute | port |
-| DE | FRANKFURT, 65926 | postal | 772 | postal_prefix | outside,shared |
 | US | USCHT | locode_dict | 1,027 | manual | port |
+| DE | FRANKFURT, 65926 | postal | 772 | postal_prefix | outside,shared |
 | NL | ROTTERDAM, 3000 CM | postal | 7,180 | city | outside,shared |
 | PT | MATOSINHOS, 4460-020 | postal | 276 | postal | shared |
 | TR | TREYP | locode_dict | 155 | unlocode | port |
@@ -110,25 +109,41 @@ Checks: `outside_country` = beyond 10 km (land) / 30 km (ports) of the Natural E
 |---|---|---:|---:|---:|---|
 | AS | ASPPG | -14.2766 | -170.69 | 1 | UN/LOCODE 1416N has the wrong hemisphere; Pago Pago harbour is 14.28S |
 | BE | ROTTERDAM, 3195 ND | 51.885 | 4.385 | 146 | 3195 ND = Pernis, Rotterdam; source country BE is wrong |
+| CA | ONTARIO, K8N 5T6 | 44.1997 | -77.3659 | 843 | reviewed: accepted postal |
+| CN | CNDGY | 37.46271 | 118.49165 | 1,668 | reviewed: accepted city |
 | CN | CNXGG | 39.0 | 117.7 | 1,849 | Tianjin Xingang (Binhai New Area); 'Binhai' city name is ambiguous |
 | CN | CNYSA | 30.63 | 122.07 | 73 | Yangshan deep-water port (Shanghai); no UN/LOCODE or gazetteer position |
 | CN | CNYTN | 22.58 | 114.28 | 2 | UN/LOCODE 2651N 11952E is in Fujian; Yantian port is in Shenzhen |
+| CN | Dongqiao, 362141 | 24.9071 | 118.5153 |  | reviewed: accepted postal_prefix |
+| CN | JIANGSU, 215434 | 31.4478 | 121.0939 | 12,221 | reviewed: accepted postal_prefix |
+| CN | Sichuan,  614222 | 29.5623 | 103.7639 | 13,115 | reviewed: accepted postal_prefix (key has a non-breaking space) |
+| CN | XINGANG, 331300 | 28.1386 | 115.6501 | 12,804 | reviewed: accepted postal |
 | DE | KISTA, 16440 | 59.403 | 17.944 | 1,448 | Kista 164 40, Stockholm; source country DE is wrong |
 | DE | LE GRAND SACONNEX, 01218 | 46.232 | 6.121 | 905 | Le Grand-Saconnex 1218, Geneva; source country DE is wrong |
+| DE | OBEMBURG, 63784 | 49.829 | 9.1536 | 825 | reviewed: accepted postal |
 | EG | 10TH RAMADAN, 44916 | 30.29 | 31.75 | 10,534 | 10th of Ramadan City - approximate city centre |
 | EG | 6TH OCTOBER CITY, 001101 | 29.97 | 30.95 | 10,506 | 6th of October City - approximate city centre |
 | EG | EGDEK | 31.133 | 29.8 | 2 | El Dekheila port (Alexandria), same port as EGEDK |
 | FR | Lavera, 13117 | 43.389 | 5.005 | 615 | Lavera (Martigues) petrochemical port; legacy point was Strasbourg |
 | FR | SALIN-DE-GIRAUD, 13129 | 43.412 | 4.731 | 620 | Salin-de-Giraud (Arles); legacy point was Strasbourg |
+| GB | CHESHIRE, WA7 4JE | 53.3258 | -2.6945 | 34 | reviewed: accepted postal |
 | IC | ICDN EMBAKASI | -1.318 | 36.88 |  | Embakasi ICD, Nairobi; source country code 'IC' is a parsing artefact |
+| IN | INMDD | 23.08166 | 77.53328 | 802 | reviewed: accepted city |
 | IN | INTKD | 28.506 | 77.269 | 2,197 | Tughlakabad ICD, New Delhi - inland container depot, inland by design |
+| IN | MAHARASHTRA, 402302 | 18.101915 | 73.500029 | 0 | reviewed: accepted legacy |
+| JP | Okinohama, 671-128 | 34.8293 | 134.5835 | 111 | reviewed: accepted postal_prefix |
 | MX | LAREDO | 27.4763 | -99.5164 | 875 | Laredo border crossing, MX side = Nuevo Laredo; legacy point was in Michoacan |
 | MX | Laredo,78040 | 27.4763 | -99.5164 | 895 | 78040 is a Laredo TX ZIP; MX side of the crossing = Nuevo Laredo |
+| MX | NUEVO LEON, 66368 | 25.7642 | -100.5011 | 718 | reviewed: accepted postal |
+| NL | NEEPERLT, 3910 | 51.9631 | 5.5704 | 7,244 | reviewed: accepted postal_prefix |
 | PK | PKQCT | 24.7814 | 67.3594 | 0 | Qasim International Container Terminal, Port Qasim (not Karachi city) |
 | SE | HELSINKI, 00160 | 60.165 | 24.96 | 6,158 | Helsinki 00160 (Katajanokka); source country SE is wrong |
 | TR | ERGENE, 00000 | 41.195 | 27.625 | 10,101 | Ergene district (Velimese), Tekirdag - approximate centre |
 | TR | TREVY | 40.7667 | 29.7 | 26 | UN/LOCODE 4002N 04303E is in eastern Anatolia; Evyapan = Evyap Port Kocaeli (TREYP) |
+| UA | CHERVONA SLOBODA VILLAGE, 18000 | 49.4285 | 32.0621 | 158 | legacy pointed to Kyiv; village near Cherkasy |
+| UA | ZAPOROZHIE, 69092 | 47.813207 | 35.20686 | 0 | reviewed: accepted legacy |
 | US | USCHT | 39.8476 | -75.3577 | 1,027 | Chester, PA (Delaware River); legacy point was Chattanooga, TN |
+| US | USPEV | 40.4262 | -75.1074 | 1,659 | reviewed: accepted city |
 
 ### Largest legacy shared points (geocoder fallbacks)
 

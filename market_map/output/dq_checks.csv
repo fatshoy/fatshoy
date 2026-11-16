@@ -10,9 +10,9 @@ OK points are inside their country,ERROR,0,3188,True,
 OK points are not shared by different places,ERROR,0,3188,True,
 OK points have no unresolved >50 km disagreement,ERROR,0,3188,True,
 active locations without coordinates,WARN,0,3188,True,
-active locations to review,WARN,17,3188,False,"CA|ONTARIO, K8N 5T6; CN|CNDGY; CN|Dongqiao, 362141; CN|JIANGSU, 215434; CN|Jiangsu, 530103"
-active locations with low confidence,WARN,13,3188,False,"CA|ONTARIO, K8N 5T6; CN|Dongqiao, 362141; CN|JIANGSU, 215434; CN|Jiangsu, 530103; CN|Sichuan,  614222"
-records on REVIEW/MISSING locations <= 1% (now 0.06%),ERROR,0,1,True,
+active locations to review,WARN,1,3188,False,"CN|Jiangsu, 530103"
+active locations with low confidence,WARN,1,3188,False,"CN|Jiangsu, 530103"
+records on REVIEW/MISSING locations <= 1% (now 0.00%),ERROR,0,1,True,
 pair map: same columns as legacy Geo_Enriched,ERROR,0,1,True,
 pair map: no rows lost or added,ERROR,0,9158,True,
 pair map: every endpoint matches the dim,ERROR,0,18316,True,

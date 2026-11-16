@@ -672,6 +672,23 @@ MANUAL_OVERRIDES = [
     ("FR", "Lavera, 13117", 43.3890, 5.0050, None, "Lavera (Martigues) petrochemical port; legacy point was Strasbourg"),
     ("FR", "SALIN-DE-GIRAUD, 13129", 43.4120, 4.7310, None, "Salin-de-Giraud (Arles); legacy point was Strasbourg"),
     ("BE", "ROTTERDAM, 3195 ND", 51.8850, 4.3850, "NL", "3195 ND = Pernis, Rotterdam; source country BE is wrong"),
+    # reviewed 2026-11-16 (manual_review.csv of the first full run)
+    ("IN", "INMDD", 23.08166, 77.53328, None, "reviewed: accepted city"),
+    ("CA", "ONTARIO, K8N 5T6", 44.1997, -77.3659, None, "reviewed: accepted postal"),
+    ("NL", "NEEPERLT, 3910", 51.9631, 5.5704, None, "reviewed: accepted postal_prefix"),
+    ("CN", "JIANGSU, 215434", 31.4478, 121.0939, None, "reviewed: accepted postal_prefix"),
+    ("US", "USPEV", 40.4262, -75.1074, None, "reviewed: accepted city"),
+    ("CN", "CNDGY", 37.46271, 118.49165, None, "reviewed: accepted city"),
+    ("DE", "OBEMBURG, 63784", 49.829, 9.1536, None, "reviewed: accepted postal"),
+    ("GB", "CHESHIRE, WA7 4JE", 53.3258, -2.6945, None, "reviewed: accepted postal"),
+    ("UA", "ZAPOROZHIE, 69092", 47.813207, 35.20686, None, "reviewed: accepted legacy"),
+    ("CN", "Sichuan, \xa0614222", 29.5623, 103.7639, None, "reviewed: accepted postal_prefix (key has a non-breaking space)"),
+    ("CN", "XINGANG, 331300", 28.1386, 115.6501, None, "reviewed: accepted postal"),
+    ("JP", "Okinohama, 671-128", 34.8293, 134.5835, None, "reviewed: accepted postal_prefix"),
+    ("IN", "MAHARASHTRA, 402302", 18.101915, 73.500029, None, "reviewed: accepted legacy"),
+    ("MX", "NUEVO LEON, 66368", 25.7642, -100.5011, None, "reviewed: accepted postal"),
+    ("UA", "CHERVONA SLOBODA VILLAGE, 18000", 49.4285, 32.0621, None, "legacy pointed to Kyiv; village near Cherkasy"),
+    ("CN", "Dongqiao, 362141", 24.9071, 118.5153, None, "reviewed: accepted postal_prefix"),
 ]
 
 # COMMAND ----------

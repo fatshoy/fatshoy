@@ -649,8 +649,9 @@ CA,"Mulgrave, B0E 2G0",city,45.61246,-61.39119,True,,False,False,inside,0.0,citi
 CA,"OAKVILLE, M5W 2N7",legacy,37.6056575,-82.3243095,False,shared point (16 differently named places),False,False,outside,452.2763719374203,postal (1 variants)
 CA,"OAKVILLE, M5W 2N7",postal,43.644,-79.3787,True,,False,True,inside,0.0,code=M5W2N7 Toronto n=1 spread=0km NAME-MISMATCH
 CA,"OAKVILLE, M5W 2N7",city,43.45011,-79.68292,True,,False,False,inside,0.0,cities500:OAKVILLE -> Oakville homonyms=1
+CA,"ONTARIO, K8N 5T6",manual,44.1997,-77.3659,True,,False,True,inside,0.0,reviewed: accepted postal
 CA,"ONTARIO, K8N 5T6",legacy,37.6056575,-82.3243095,False,shared point (16 differently named places),False,False,outside,452.2763719374203,postal (1 variants)
-CA,"ONTARIO, K8N 5T6",postal,44.1997,-77.3659,True,,False,True,inside,0.0,code=K8N5T6 Belleville n=1 spread=0km NAME-MISMATCH
+CA,"ONTARIO, K8N 5T6",postal,44.1997,-77.3659,True,,False,False,inside,0.0,code=K8N5T6 Belleville n=1 spread=0km NAME-MISMATCH
 CA,"ONTARIO, K8N 5T6",city,43.65333,-79.38389,True,,False,False,inside,0.0,admin1:ONTARIO->Toronto -> Toronto homonyms=1 loose
 CA,"PICKERING, L1W 3Y1",legacy,38.6752399,-0.8099623,False,shared point (10 differently named places),False,False,outside,4237.278067159357,postal (1 variants)
 CA,"PICKERING, L1W 3Y1",postal,43.8109,-79.119,True,,False,True,inside,0.0,code=L1W3Y1 Pickering n=1 spread=0km
@@ -925,8 +926,9 @@ CN,CNDCB,unlocode,22.533333333333335,113.86666666666666,True,,False,True,outside
 CN,CNDCB,searoute,22.32,113.52,True,,False,False,inside,0.0,CNDCB
 CN,CNDCB,legacy,39.0167,117.7167,True,,False,False,inside,0.0,locode_dict (1 variants)
 CN,CNDCB,city,22.54086,113.85906,True,,False,False,outside,0.9243486628080702,cities500:DA CHAN BAY -> Dachan Bay homonyms=1
-CN,CNDGY,legacy,23.0207,113.7519,True,,True,False,inside,0.0,locode_dict (1 variants)
-CN,CNDGY,city,37.46271,118.49165,True,,False,True,inside,0.0,cities500:DONGYING -> Dongying homonyms=4
+CN,CNDGY,manual,37.46271,118.49165,True,,False,True,inside,0.0,reviewed: accepted city
+CN,CNDGY,legacy,23.0207,113.7519,True,,False,False,inside,0.0,locode_dict (1 variants)
+CN,CNDGY,city,37.46271,118.49165,True,,False,False,inside,0.0,cities500:DONGYING -> Dongying homonyms=4 anchored
 CN,CNFOC,searoute,26.055821,119.286809,True,,False,True,inside,0.0,CNFOC
 CN,CNFOC,city,36.70583,118.8275,True,,False,False,inside,0.0,cities500:CHANGLE -> Changle homonyms=5 loose
 CN,CNGGZ,unlocode,23.133333333333333,113.23333333333333,True,,False,True,inside,0.0,Guangzhou [AS]
@@ -1096,7 +1098,8 @@ CN,"DONGGUAN, 523333",city,23.01797,113.74866,True,,False,False,inside,0.0,citie
 CN,"DONGYING, 257000",legacy,37.4327449,118.6247684,True,,False,True,inside,0.0,postal (1 variants)
 CN,"DONGYING, 257000",postal,37.4627,118.4917,True,,False,False,inside,0.0,code=257000 Dongying n=1 spread=0km
 CN,"DONGYING, 257000",city,37.46271,118.49165,True,,False,False,inside,0.0,cities500:DONGYING -> Dongying homonyms=4 anchored
-CN,"Dongqiao, 362141",postal_prefix,24.9071,118.5153,True,,False,True,inside,0.0,prefix=3621 (1 codes) Hui'an County n=1 spread=0km NAME-MISMATCH
+CN,"Dongqiao, 362141",manual,24.9071,118.5153,True,,False,True,inside,0.0,reviewed: accepted postal_prefix
+CN,"Dongqiao, 362141",postal_prefix,24.9071,118.5153,True,,False,False,inside,0.0,prefix=3621 (1 codes) Hui'an County n=1 spread=0km NAME-MISMATCH
 CN,"Dongqiao, 362141",city,31.19322,112.83118,True,,False,False,inside,0.0,cities500:DONGQIAO -> Dongqiao homonyms=4
 CN,"EMEISHAN, 614222",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
 CN,"EMEISHAN, 614222",postal_prefix,29.5623,103.7639,True,,False,True,inside,0.0,prefix=6142 (1 codes) Emeishan City n=1 spread=0km
@@ -1141,8 +1144,9 @@ CN,"Hangzhou, 310013",city,30.29365,120.16142,True,,False,False,inside,0.0,citie
 CN,"JIANDE, 311606",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
 CN,"JIANDE, 311606",postal_prefix,29.5429,119.4991,True,,False,True,inside,0.0,prefix=31160 (1 codes) Jiande n=1 spread=0km
 CN,"JIANDE, 311606",city,29.54289,119.49907,True,,False,False,inside,0.0,cities500:JIANDE -> Meicheng homonyms=1
+CN,"JIANGSU, 215434",manual,31.4478,121.0939,True,,False,True,inside,0.0,reviewed: accepted postal_prefix
 CN,"JIANGSU, 215434",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
-CN,"JIANGSU, 215434",postal_prefix,31.4478,121.0939,True,,False,True,inside,0.0,prefix=2154 (1 codes) Taicang n=1 spread=0km NAME-MISMATCH
+CN,"JIANGSU, 215434",postal_prefix,31.4478,121.0939,True,,False,False,inside,0.0,prefix=2154 (1 codes) Taicang n=1 spread=0km NAME-MISMATCH
 CN,"JIANGSU, 215434",city,32.06167,118.77778,True,,False,False,inside,0.0,admin1:JIANGSU->Nanjing -> Nanjing homonyms=1 loose
 CN,"JINAN, 250101",legacy,36.684932,117.1306632,True,,False,True,inside,0.0,postal (1 variants)
 CN,"JINAN, 250101",postal_prefix,36.6925,117.2486,True,,False,False,inside,0.0,prefix=25010 (1 codes) Licheng District n=1 spread=0km NAME-MISMATCH
@@ -1260,8 +1264,9 @@ CN,"SUZHOU, 215151",city,31.30408,120.59538,True,,False,False,inside,0.0,cities5
 CN,"Shandong, 262499",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
 CN,"Shandong, 262499",postal_prefix,36.5014,118.9518,True,,False,True,inside,0.0,prefix=2624 (1 codes) Changle County n=1 spread=0km NAME-MISMATCH
 CN,"Shandong, 262499",city,36.71,119.10194,True,,False,False,inside,0.0,admin1:SHANDONG->Weifang -> Weifang homonyms=1 loose
+CN,"Sichuan,  614222",manual,29.5623,103.7639,True,,False,True,inside,0.0,reviewed: accepted postal_prefix (key has a non-breaking space)
 CN,"Sichuan,  614222",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
-CN,"Sichuan,  614222",postal_prefix,29.5623,103.7639,True,,False,True,inside,0.0,prefix=6142 (1 codes) Emeishan City n=1 spread=0km NAME-MISMATCH
+CN,"Sichuan,  614222",postal_prefix,29.5623,103.7639,True,,False,False,inside,0.0,prefix=6142 (1 codes) Emeishan City n=1 spread=0km NAME-MISMATCH
 CN,"Sichuan,  614222",city,30.66667,104.06667,True,,False,False,inside,0.0,admin1:SICHUAN->Chengdu -> Chengdu homonyms=1 loose
 CN,"TAICANG, 215415",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
 CN,"TAICANG, 215415",postal_prefix,31.4478,121.0939,True,,False,True,inside,0.0,prefix=2154 (1 codes) Taicang n=1 spread=0km
@@ -1299,8 +1304,9 @@ CN,"WUXI, 214101",city,31.56887,120.28857,True,,False,False,inside,0.0,cities500
 CN,"XIAMEN, 361100",legacy,24.6106222,118.1336037,True,,False,True,outside,0.8025733830800035,postal (1 variants)
 CN,"XIAMEN, 361100",postal,25.2174,117.8854,True,,False,False,inside,0.0,code=361100 Tong'an District n=1 spread=0km NAME-MISMATCH
 CN,"XIAMEN, 361100",city,24.47979,118.08187,True,,False,False,outside,0.2852254480953328,cities500:XIAMEN -> Xiamen homonyms=1
+CN,"XINGANG, 331300",manual,28.1386,115.6501,True,,False,True,inside,0.0,reviewed: accepted postal
 CN,"XINGANG, 331300",legacy,30.047992,-94.3357433,False,shared point (48 differently named places),False,False,outside,12210.555286691415,postal (1 variants)
-CN,"XINGANG, 331300",postal,28.1386,115.6501,True,,False,True,inside,0.0,code=331300 Xingan County n=1 spread=0km NAME-MISMATCH
+CN,"XINGANG, 331300",postal,28.1386,115.6501,True,,False,False,inside,0.0,code=331300 Xingan County n=1 spread=0km NAME-MISMATCH
 CN,"XINGANG, 331300",city,29.75419,116.09721,True,,False,False,inside,0.0,cities500:XINGANG -> Xingang homonyms=4
 CN,"Xiang An, Fujian, 361100",legacy,24.6106222,118.1336037,True,,False,True,outside,0.8025733830800035,postal (1 variants)
 CN,"Xiang An, Fujian, 361100",postal,25.2174,117.8854,True,,False,False,inside,0.0,code=361100 Tong'an District n=1 spread=0km NAME-MISMATCH
@@ -2220,8 +2226,9 @@ DE,"NORTHEIM, 37154",city,51.70662,9.99997,True,,False,False,inside,0.0,cities50
 DE,"Neuss, 41464",legacy,51.1891755,6.6716036,True,,False,True,inside,0.0,postal (1 variants)
 DE,"Neuss, 41464",postal,51.1843,6.6821,True,,False,False,inside,0.0,code=41464 Neuss n=1 spread=0km
 DE,"Neuss, 41464",city,51.19807,6.68504,True,,False,False,inside,0.0,cities500:NEUSS -> Neuss homonyms=1
+DE,"OBEMBURG, 63784",manual,49.829,9.1536,True,,False,True,inside,0.0,reviewed: accepted postal
 DE,"OBEMBURG, 63784",legacy,52.4813269,-1.9054517,False,shared point (12 differently named places),False,False,outside,539.5034819547095,postal (1 variants)
-DE,"OBEMBURG, 63784",postal,49.829,9.1536,True,,False,True,inside,0.0,code=63784 Mainsite GmbH & Co. KG n=1 spread=0km NAME-MISMATCH
+DE,"OBEMBURG, 63784",postal,49.829,9.1536,True,,False,False,inside,0.0,code=63784 Mainsite GmbH & Co. KG n=1 spread=0km NAME-MISMATCH
 DE,"OBERHAUSEN, 00000",legacy,53.0833711,8.7872415,True,,True,False,inside,0.0,postal (1 variants)
 DE,"OBERHAUSEN, 00000",city,51.47805,6.8625,True,,False,True,inside,0.0,cities500:OBERHAUSEN -> Oberhausen homonyms=4
 DE,"OBERSCHLEISSHEIM, 85764",legacy,48.2496853,11.557467,True,,False,True,inside,0.0,postal (1 variants)
@@ -3463,8 +3470,9 @@ GB,"CHERTSEY, KT16 9GJ",postal,51.3833,-0.507,True,,False,False,inside,0.0,code=
 GB,"CHERTSEY, KT16 9GJ",city,51.38812,-0.50782,True,,False,False,inside,0.0,cities500:CHERTSEY -> Chertsey homonyms=1
 GB,"CHESHIRE, WA7 1PH",legacy,53.3426475,-2.7107508,True,,False,True,inside,0.0,postal (1 variants)
 GB,"CHESHIRE, WA7 1PH",postal,53.3423,-2.7099,True,,False,False,inside,0.0,code=WA71PH Runcorn n=1 spread=0km NAME-MISMATCH
+GB,"CHESHIRE, WA7 4JE",manual,53.3258,-2.6945,True,,False,True,inside,0.0,reviewed: accepted postal
 GB,"CHESHIRE, WA7 4JE",legacy,53.4626401,-2.2372955,False,shared point (5 differently named places),False,False,inside,0.0,postal (1 variants)
-GB,"CHESHIRE, WA7 4JE",postal,53.3258,-2.6945,True,,False,True,inside,0.0,code=WA74JE Runcorn n=1 spread=0km NAME-MISMATCH
+GB,"CHESHIRE, WA7 4JE",postal,53.3258,-2.6945,True,,False,False,inside,0.0,code=WA74JE Runcorn n=1 spread=0km NAME-MISMATCH
 GB,"CHESTERFIELD, S45 9BX",legacy,53.16249,-1.3958299,True,,False,True,inside,0.0,postal (1 variants)
 GB,"CHESTERFIELD, S45 9BX",postal,53.1625,-1.3958,True,,False,False,inside,0.0,code=S459BX Clay Cross n=1 spread=0km NAME-MISMATCH
 GB,"CHESTERFIELD, S45 9BX",city,53.25,-1.41667,True,,False,False,inside,0.0,cities500:CHESTERFIELD -> Chesterfield homonyms=1
@@ -4222,8 +4230,9 @@ IN,INMAA,searoute,13.1,80.283333,True,,False,False,inside,0.0,INMAA
 IN,INMAA,seaports,13.08,80.28,True,,False,False,inside,0.0,INMAA
 IN,INMAA,legacy,13.0827,80.2707,True,,False,False,inside,0.0,locode_dict (1 variants)
 IN,INMAA,city,13.08784,80.27847,True,,False,False,inside,0.0,cities500:CHENNAI -> Chennai homonyms=1 loose
-IN,INMDD,legacy,22.8333,69.7,True,,True,False,inside,0.0,locode_dict (1 variants); shared with 1 other place
-IN,INMDD,city,23.08166,77.53328,True,,False,True,inside,0.0,cities500:MANDIDEEP -> Mandideep homonyms=1
+IN,INMDD,manual,23.08166,77.53328,True,,False,True,inside,0.0,reviewed: accepted city
+IN,INMDD,legacy,22.8333,69.7,True,,False,False,inside,0.0,locode_dict (1 variants); shared with 1 other place
+IN,INMDD,city,23.08166,77.53328,True,,False,False,inside,0.0,cities500:MANDIDEEP -> Mandideep homonyms=1
 IN,INMUN,searoute,22.795048,69.746702,True,,False,True,inside,0.0,INMUN
 IN,INMUN,seaports,22.8395202,69.7213266,True,,False,False,inside,0.0,INMUN
 IN,INMUN,legacy,22.8333,69.7,True,,False,False,inside,0.0,locode_dict (1 variants); shared with 1 other place
@@ -4250,7 +4259,8 @@ IN,"KUNDAIM, PONDA, GOA, 403115",city,15.40341,74.01519,True,,False,False,inside
 IN,"MAHARASHTRA, 400709",legacy,19.1017305,73.0045923,True,,False,True,inside,0.0,postal (1 variants)
 IN,"MAHARASHTRA, 400709",postal,19.36,73.3279,True,,False,False,inside,0.0,code=400709 Kopar Khairne n=1 spread=0km NAME-MISMATCH
 IN,"MAHARASHTRA, 400709",city,19.07283,72.88261,True,,False,False,inside,0.0,admin1:MAHARASHTRA->Mumbai -> Mumbai homonyms=1 loose
-IN,"MAHARASHTRA, 402302",legacy,18.1019149,73.5000289,True,,False,True,inside,0.0,postal (1 variants)
+IN,"MAHARASHTRA, 402302",manual,18.101915,73.500029,True,,False,True,inside,0.0,reviewed: accepted legacy
+IN,"MAHARASHTRA, 402302",legacy,18.1019149,73.5000289,True,,False,False,inside,0.0,postal (1 variants)
 IN,"MAHARASHTRA, 402302",postal,16.8575,74.1864,True,,False,False,inside,0.0,code=402302 Mohot n=13 spread=117km NAME-MISMATCH
 IN,"MAHARASHTRA, 402302",city,19.07283,72.88261,True,,False,False,inside,0.0,admin1:MAHARASHTRA->Mumbai -> Mumbai homonyms=1 loose
 IN,"MANDIDEEP, 462046",legacy,23.1198444,77.500676,True,,False,True,inside,0.0,postal (1 variants)
@@ -4758,8 +4768,9 @@ JP,"OSAKA, 5410043",city,34.69379,135.50107,True,,False,False,inside,0.0,cities5
 JP,"OSAKA, 5418543",legacy,38.239215,-91.3059819,False,shared point (6 differently named places),False,False,outside,12182.557702475637,postal (1 variants)
 JP,"OSAKA, 5418543",postal,34.6801,135.5141,True,,False,True,inside,0.0,code=5418543 Koraibashi n=1 spread=0km NAME-MISMATCH
 JP,"OSAKA, 5418543",city,34.69379,135.50107,True,,False,False,inside,0.0,cities500:OSAKA -> Osaka homonyms=1
-JP,"Okinohama, 671-128",legacy,34.9337938,135.7922073,True,,True,False,inside,0.0,postal (1 variants)
-JP,"Okinohama, 671-128",postal_prefix,34.8293,134.5835,True,,False,True,inside,0.0,prefix=67112 (46 codes) Aboshiku Okinohama n=1 spread=0km
+JP,"Okinohama, 671-128",manual,34.8293,134.5835,True,,False,True,inside,0.0,reviewed: accepted postal_prefix
+JP,"Okinohama, 671-128",legacy,34.9337938,135.7922073,True,,False,False,inside,0.0,postal (1 variants)
+JP,"Okinohama, 671-128",postal_prefix,34.8293,134.5835,True,,False,False,inside,0.0,prefix=67112 (46 codes) Aboshiku Okinohama n=1 spread=0km
 JP,"Okinohama, 671-128",city,34.1873,134.20420000000001,True,,False,False,inside,0.0,postal_place:OKINOHAMA -> Okinohama homonyms=1
 JP,"SHIGA, 5202316",legacy,40.9921996,-75.9078749,False,shared point (5 differently named places),False,False,outside,12481.983583332818,postal (1 variants)
 JP,"SHIGA, 5202316",postal,35.0868,136.0477,True,,False,True,inside,0.0,code=5202316 Kamiya n=1 spread=0km NAME-MISMATCH
@@ -5415,8 +5426,9 @@ MX,NUEVO LAREDO,city,27.47629,-99.51639,True,,False,False,inside,0.0,cities500:N
 MX,"NUEVO LEON, 64000",legacy,25.6754665,-100.3251348,True,,False,True,inside,0.0,postal (1 variants)
 MX,"NUEVO LEON, 64000",postal,25.7334,-100.3321,True,,False,False,inside,0.0,code=64000 La Finca n=2 spread=0km NAME-MISMATCH
 MX,"NUEVO LEON, 64000",city,32.4095,-115.18896,True,,False,False,inside,0.0,cities500:NUEVO LEON -> Nuevo León homonyms=3
+MX,"NUEVO LEON, 66368",manual,25.7642,-100.5011,True,,False,True,inside,0.0,reviewed: accepted postal
 MX,"NUEVO LEON, 66368",legacy,19.4326296,-99.1331785,False,shared point (15 differently named places),False,False,inside,0.0,postal (1 variants)
-MX,"NUEVO LEON, 66368",postal,25.7642,-100.5011,True,,False,True,inside,0.0,code=66368 Parque 300 n=8 spread=21km NAME-MISMATCH
+MX,"NUEVO LEON, 66368",postal,25.7642,-100.5011,True,,False,False,inside,0.0,code=66368 Parque 300 n=8 spread=21km NAME-MISMATCH
 MX,"NUEVO LEON, 66368",city,32.4095,-115.18896,True,,False,False,inside,0.0,cities500:NUEVO LEON -> Nuevo León homonyms=3
 MX,"NUEVO LEON, 66465",legacy,25.7355697,-100.2912501,True,,False,True,inside,0.0,postal (1 variants)
 MX,"NUEVO LEON, 66465",postal,25.7615,-100.2814,True,,False,False,inside,0.0,code=66465 Residencial Las Palmas Sector 2 n=9 spread=0km NAME-MISMATCH
@@ -5837,8 +5849,9 @@ NL,"LEIDEN, 2342 BH",city,52.15833,4.49306,True,,False,False,inside,0.0,cities50
 NL,"LEUSDEN, 3832 GK",legacy,52.1075341,5.4117044,True,,False,True,inside,0.0,postal (1 variants)
 NL,"LEUSDEN, 3832 GK",postal,52.1064,5.4126,True,,False,False,inside,0.0,code=3832GK Leusden n=1 spread=0km
 NL,"LEUSDEN, 3832 GK",city,52.1325,5.43194,True,,False,False,inside,0.0,cities500:LEUSDEN -> Leusden homonyms=1
+NL,"NEEPERLT, 3910",manual,51.9631,5.5704,True,,False,True,inside,0.0,reviewed: accepted postal_prefix
 NL,"NEEPERLT, 3910",legacy,36.2993736,-89.7510062,False,shared point (4 differently named places),False,False,outside,3417.5966714830997,postal (1 variants)
-NL,"NEEPERLT, 3910",postal_prefix,51.9631,5.5704,True,,False,True,inside,0.0,prefix=391 (375 codes) Rhenen n=375 spread=6km NAME-MISMATCH
+NL,"NEEPERLT, 3910",postal_prefix,51.9631,5.5704,True,,False,False,inside,0.0,prefix=391 (375 codes) Rhenen n=375 spread=6km NAME-MISMATCH
 NL,"NIJKERK, 3861 SM",legacy,52.2292575,5.4613504,True,,False,True,inside,0.0,postal (1 variants)
 NL,"NIJKERK, 3861 SM",postal,52.2293,5.4614,True,,False,False,inside,0.0,code=3861SM Nijkerk n=1 spread=0km
 NL,"NIJKERK, 3861 SM",city,52.22,5.48611,True,,False,False,inside,0.0,cities500:NIJKERK -> Nijkerk homonyms=1
@@ -7202,7 +7215,8 @@ UA,"CHERKASY, 18015",city,49.44452,32.05738,True,,False,False,inside,0.0,cities5
 UA,"CHERNOMORSK, 68001",legacy,46.3063248,30.6572116,True,,False,True,inside,0.0,postal (1 variants)
 UA,"CHERNOMORSK, 68001",postal,45.647,29.0499,True,,False,False,inside,0.0,code=68001 Чорноморськ (Чорноморська міська рада) n=1 spread=0km NAME-MISMATCH
 UA,"CHERNOMORSK, 68001",city,46.29914,30.65529,True,,False,False,inside,0.0,cities500:CHERNOMORSK -> Chornomors’k homonyms=1
-UA,"CHERVONA SLOBODA VILLAGE, 18000",legacy,50.4485578,30.5271623,True,,False,True,inside,0.0,postal (1 variants)
+UA,"CHERVONA SLOBODA VILLAGE, 18000",manual,49.4285,32.0621,True,,False,True,inside,0.0,legacy pointed to Kyiv; village near Cherkasy
+UA,"CHERVONA SLOBODA VILLAGE, 18000",legacy,50.4485578,30.5271623,True,,False,False,inside,0.0,postal (1 variants)
 UA,"CHERVONA SLOBODA VILLAGE, 18000",postal,49.4285,32.0621,True,,False,False,inside,0.0,code=18000 Черкаси n=1 spread=0km NAME-MISMATCH
 UA,"CHERVONA SLOBODA, 18000",legacy,50.4485578,30.5271623,True,,True,False,inside,0.0,postal (1 variants)
 UA,"CHERVONA SLOBODA, 18000",postal,49.4285,32.0621,True,,False,True,inside,0.0,code=18000 Черкаси n=1 spread=0km NAME-MISMATCH
@@ -7272,7 +7286,8 @@ UA,"UKRAINKA, 08720",city,50.14317,30.74612,True,,False,False,inside,0.0,cities5
 UA,"URBAN VILLAGE RAIGORODOK, 84150",legacy,48.8978246,37.7273816,True,,False,True,inside,0.0,postal (1 variants)
 UA,"URBAN VILLAGE RAIGORODOK, 84150",postal,48.8985,37.7269,True,,False,False,inside,0.0,code=84150 Райгородок n=1 spread=0km
 UA,"URBAN VILLAGE RAIGORODOK, 84150",city,48.90209,37.72467,True,,False,False,inside,0.0,cities500:RAIGORODOK -> Raihorodok homonyms=2 loose anchored
-UA,"ZAPOROZHIE, 69092",legacy,47.8132071,35.2068595,True,,False,True,inside,0.0,postal (1 variants)
+UA,"ZAPOROZHIE, 69092",manual,47.813207,35.20686,True,,False,True,inside,0.0,reviewed: accepted legacy
+UA,"ZAPOROZHIE, 69092",legacy,47.8132071,35.2068595,True,,False,False,inside,0.0,postal (1 variants)
 UA,"ZAPOROZHIE, 69092",postal,46.9599,35.0432,True,,False,False,inside,0.0,code=69092 Запоріжжя n=1 spread=0km NAME-MISMATCH
 UA,"ZHIDACHIV, 81700",legacy,49.3857791,24.1378235,True,,False,True,inside,0.0,postal (1 variants)
 UA,"ZHIDACHIV, 81700",postal,49.3847,24.1425,True,,False,False,inside,0.0,code=81700 Жидачів n=1 spread=0km
@@ -9528,8 +9543,9 @@ US,USPEF,unlocode,26.1,-80.13333333333334,True,,False,True,inside,0.0,Port Everg
 US,USPEF,searoute,26.066612,-80.118828,True,,False,False,inside,0.0,USPEF
 US,USPEF,seaports,26.1,-80.13,True,,False,False,inside,0.0,USPEF
 US,USPEF,legacy,26.096,-80.1139,True,,False,False,outside,1.1446744612759618,locode_dict (1 variants); shared with 1 other place
-US,USPEV,legacy,26.096,-80.1139,True,,True,False,outside,1.1446744612759618,locode_dict (1 variants); shared with 1 other place
-US,USPEV,city,40.4262,-75.1074,True,,False,True,inside,0.0,postal_place:PIPERSVILLE -> Pipersville homonyms=1
+US,USPEV,manual,40.4262,-75.1074,True,,False,True,inside,0.0,reviewed: accepted city
+US,USPEV,legacy,26.096,-80.1139,True,,False,False,outside,1.1446744612759618,locode_dict (1 variants); shared with 1 other place
+US,USPEV,city,40.4262,-75.1074,True,,False,False,inside,0.0,postal_place:PIPERSVILLE -> Pipersville homonyms=1
 US,USPHL,searoute,39.885289,-75.188553,True,,False,True,outside,0.59388056425103,USPHL
 US,USPHL,seaports,39.9525839,-75.1652215,True,,False,False,inside,0.0,USPHL
 US,USPHL,legacy,39.9526,-75.1652,True,,False,False,inside,0.0,locode_dict (1 variants)
