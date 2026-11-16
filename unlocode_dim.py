@@ -68,12 +68,12 @@ PAIR_TABLE_NAME = "market_map"               # pair map, legacy Geo_Enriched lay
 REFINED_ROOT = "/mnt/mda-pipeline-refined"
 DIM_PATH = f"{REFINED_ROOT}/{DIM_TABLE_NAME}"
 PAIR_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}"
-HISTORY_PATH = f"{REFINED_ROOT}/{DIM_TABLE_NAME}_history"   # dim snapshot per build_date
-DQ_PATH = f"{REFINED_ROOT}/{PAIR_TABLE_NAME}_dq"            # data-quality results per run
+HISTORY_TABLE_NAME = f"{DIM_TABLE_NAME}_history"   # dim snapshot of every run (append)
+DQ_TABLE_NAME = f"{PAIR_TABLE_NAME}_dq"            # data-quality results of every run (append)
+HISTORY_PATH = f"{REFINED_ROOT}/{HISTORY_TABLE_NAME}"
+DQ_PATH = f"{REFINED_ROOT}/{DQ_TABLE_NAME}"
+# All outputs are written with the shared saveTable helper, which writes /mnt/mda-pipeline-refined/<name>
 
-# Optional Unity Catalog copy of the dim (UC managed tables are always Delta)
-WRITE_UC_TABLE = False
-TARGET_TABLE = f"{CATALOG}.{SCHEMA}.market_map_location_dim"
 
 # DQ gate: stop before writing when more than this share of rate records sits on unresolved locations
 MAX_UNRESOLVED_RECORD_SHARE = 0.01
@@ -118,7 +118,7 @@ FROM {UNLOCODE_TABLE}
 """
 
 # never overwrite an input
-_outputs = {DIM_PATH, PAIR_PATH, HISTORY_PATH, DQ_PATH} | ({TARGET_TABLE} if WRITE_UC_TABLE else set())
+_outputs = {DIM_PATH, PAIR_PATH, HISTORY_PATH, DQ_PATH}
 _inputs = {CONSULTANT_FACT_PATH, LEGACY_MARKET_MAP_PATH, UNLOCODE_TABLE, f"{REFINED_ROOT}/unlocode_dim"}
 if _outputs & _inputs:
     raise ValueError(f"output would overwrite an input: {_outputs & _inputs}")
@@ -1371,7 +1371,7 @@ save_output("location_candidates.csv", res["candidates"].to_csv(index=False))
 save_output("manual_overrides.csv", res["manual"].to_csv(index=False))
 save_output("dq_checks.csv", dq.to_csv(index=False))
 save_output("validation_report.md", res["report"])
-to_spark(dq).write.mode("append").parquet(DQ_PATH)
+saveTable(DQ_TABLE_NAME, "parquet", "append", to_spark(dq))
 
 errors = dq[(dq.severity == "ERROR") & ~dq.passed]
 if len(errors):
@@ -1381,17 +1381,15 @@ print("DQ gate passed")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Save parquet (dim, pair map, history) and the UC table
+# MAGIC ## Step 3: Save parquet with saveTable (dim, pair map, history)
 
 # COMMAND ----------
 
 
-def save_parquet(name, path, pdf):
+def save_checked(name, path, pdf):
+    """Overwrite /mnt/mda-pipeline-refined/<name> with saveTable and check the row count."""
     sdf = to_spark(pdf)
-    if "saveTable" in globals():  # shared pipeline helper, writes /mnt/mda-pipeline-refined/<name>
-        saveTable(name, "parquet", "overwrite", sdf)
-    else:
-        sdf.write.mode("overwrite").parquet(path)
+    saveTable(name, "parquet", "overwrite", sdf)
     back = spark.read.parquet(path).count()
     if back != len(pdf):
         raise ValueError(f"{path}: wrote {len(pdf)} rows, read back {back}")
@@ -1399,17 +1397,12 @@ def save_parquet(name, path, pdf):
     return sdf
 
 
-sdf_dim = save_parquet(DIM_TABLE_NAME, DIM_PATH, dim)
-save_parquet(PAIR_TABLE_NAME, PAIR_PATH, pair)
+sdf_dim = save_checked(DIM_TABLE_NAME, DIM_PATH, dim)   # market_map_location_dim
+save_checked(PAIR_TABLE_NAME, PAIR_PATH, pair)          # market_map
 
-# one snapshot per day; a rerun on the same day replaces that day only
-spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
-(sdf_dim.withColumn("build_date", F.lit(run_date))
- .write.mode("overwrite").partitionBy("build_date").parquet(HISTORY_PATH))
-
-if WRITE_UC_TABLE:
-    sdf_dim.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
-    print(f"saved {sdf_dim.count()} rows to {TARGET_TABLE}")
+# history: every run appended with its build_date / build_ts (latest snapshot = max(build_ts))
+saveTable(HISTORY_TABLE_NAME, "parquet", "append", sdf_dim.withColumn("build_date", F.lit(run_date)))
+print(f"appended {len(dim)} rows to {HISTORY_PATH}")
 
 save_output("market_map_location_dim_recalculated.csv", res["dim"].to_csv(index=False))
 save_output("market_map_location_dim.csv", dim.to_csv(index=False))

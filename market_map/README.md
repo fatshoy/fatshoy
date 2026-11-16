@@ -1,15 +1,14 @@
 # market_map rebuild (consultant rate location coordinates)
 
 `../unlocode_dim.py` is the Databricks notebook that builds the location dim (one validated coordinate per
-location) and the pair-level market_map, validates both, and writes them as parquet:
+location) and the pair-level market_map, validates both, and writes them as parquet with the shared `saveTable` helper:
 
 | path | content |
 |---|---|
 | `/mnt/mda-pipeline-refined/market_map_location_dim` | location dim |
 | `/mnt/mda-pipeline-refined/market_map` | pair map, legacy `Geo_Enriched` layout |
-| `/mnt/mda-pipeline-refined/market_map_location_dim_history` | dim snapshot per `build_date` |
+| `/mnt/mda-pipeline-refined/market_map_location_dim_history` | dim of every run, appended (`build_date`, `build_ts`) |
 | `/mnt/mda-pipeline-refined/market_map_dq` | data-quality results of every run |
-| `cdl_mda_prod.internal_material_data_asset.market_map_location_dim` | optional Delta copy (off by default) |
 
 Inputs are read directly: locations and lanes from `/mnt/mda-pipeline-refined/ibl_consultant_fact`, the old map from
 `/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet`, UN/LOCODE from
