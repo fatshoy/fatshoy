@@ -230,6 +230,7 @@ print("Step 1 complete - inputs and reference files ready")
 # COMMAND ----------
 
 # CORE
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 import difflib
 import json
 import math
@@ -649,6 +650,7 @@ class Cities:
 # COMMAND ----------
 
 # CORE
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 MANUAL_OVERRIDES = [
     # cc, loc, lat, lon, validate_cc, note
     ("AS", "ASPPG", -14.2766, -170.6900, None, "UN/LOCODE 1416N has the wrong hemisphere; Pago Pago harbour is 14.28S"),
@@ -699,6 +701,7 @@ MANUAL_OVERRIDES = [
 # COMMAND ----------
 
 # CORE
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 def parse_location(cc, loc, desc):
     s = str(loc).strip()
     d = None if str(desc).strip().lower() in ("", "null") else str(desc).strip()
@@ -1203,6 +1206,7 @@ def _report(dim, cands, refs, paths):
 # COMMAND ----------
 
 # CORE
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 # Coordinate and validation columns that are frozen for locations already accepted in an earlier run
 COORD_COLS = ["lat", "lon", "geo_src", "geo_conf", "geo_detail", "supporting_sources", "n_supporting",
               "max_disagree_km", "disagree_sources", "outvoted_sources", "country_check", "country_dist_km",
@@ -1335,6 +1339,7 @@ def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=
 
 # COMMAND ----------
 
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
@@ -1401,6 +1406,9 @@ print("DQ gate passed")
 # MAGIC ## Step 3: Save parquet with saveTable (dim, pair map, history)
 
 # COMMAND ----------
+
+
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 
 
 def save_checked(name, path, pdf):
