@@ -151,6 +151,7 @@ OPTIONAL_REFS = {"wpi.csv", "searoute_ports.geojson", "seaports.json"}
 # COMMAND ----------
 
 import os
+import re
 import tempfile
 import urllib.request
 import zipfile
@@ -162,7 +163,14 @@ os.makedirs(LOCAL_TMP, exist_ok=True)
 
 
 def _first_line(e):
-    return str(e).strip().splitlines()[0][:300] if str(e).strip() else type(e).__name__
+    """Most informative line of an error (Py4J errors start with 'An error occurred while calling ...')."""
+    lines = [l.strip() for l in str(e).splitlines() if l.strip()]
+    causes = [l for l in lines if re.search(r"(Exception|Error|denied|not allowed)", l)
+              and not l.startswith("An error occurred while calling")]
+    return (causes[0] if causes else (lines[0] if lines else type(e).__name__))[:300]
+
+
+CACHE_OK = True  # set False after the first failed copy between local disk and storage
 
 
 def _exists(uri):
@@ -209,9 +217,14 @@ def _download(name, url):
     """Local copy of a reference file: from the cache when present, else downloaded (and cached)."""
     local_path = f"{LOCAL_TMP}/{name}"
     cached = f"{REF_DIR}/{name}"
-    if not REFRESH_REFS and _exists(cached):
-        dbutils.fs.cp(cached, f"file:{local_path}")
-        return local_path
+    global CACHE_OK
+    if CACHE_OK and not REFRESH_REFS and _exists(cached):
+        try:
+            dbutils.fs.cp(cached, f"file:{local_path}")
+            return local_path
+        except Exception as e:
+            CACHE_OK = False
+            print(f"  cache not readable, downloading instead: {_first_line(e)}")
     req = urllib.request.Request(url, headers={"User-Agent": "market-map-build"})
     with urllib.request.urlopen(req, timeout=600) as r, open(local_path, "wb") as f:
         f.write(r.read())
@@ -219,18 +232,31 @@ def _download(name, url):
         head = f.read(200).lower()
     if b"<html" in head or b"<!doctype" in head:
         raise RuntimeError(f"{url} returned an HTML page (service unavailable?)")
-    try:
-        dbutils.fs.cp(f"file:{local_path}", cached)
-    except Exception as e:  # caching is a convenience; the build continues
-        print(f"  not cached {name}: {_first_line(e)}")
+    if CACHE_OK:
+        try:
+            dbutils.fs.cp(f"file:{local_path}", cached)
+        except Exception as e:  # caching only saves download time; the build continues without it
+            CACHE_OK = False
+            print(f"  reference files will not be cached (downloaded on every run): {_first_line(e)}")
     return local_path
 
 
 def save_output(name, write):
-    """write(local_path) creates the file locally; it is then copied to OUT_DIR."""
+    """write(local_path) creates the text file locally; it is then copied to OUT_DIR
+    (dbutils.fs.cp, or dbutils.fs.put when the cluster blocks copies from local disk)."""
     local_path = f"{LOCAL_TMP}/out_{name}"
     write(local_path)
-    dbutils.fs.cp(f"file:{local_path}", f"{OUT_DIR}/{name}")
+    dst = f"{OUT_DIR}/{name}"
+    try:
+        dbutils.fs.cp(f"file:{local_path}", dst)
+        return
+    except Exception as e:
+        first_err = _first_line(e)
+    try:
+        with open(local_path, encoding="utf-8") as f:
+            dbutils.fs.put(dst, f.read(), True)
+    except Exception as e:  # CSV outputs are secondary; the parquet outputs are still written
+        print(f"WARNING: {name} not saved to {OUT_DIR} ({first_err}; {_first_line(e)}). Local copy: {local_path}")
 
 
 local = {}
