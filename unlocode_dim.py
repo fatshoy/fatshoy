@@ -31,12 +31,12 @@
 # MAGIC
 # MAGIC **Inputs** (read directly): locations and lanes from `ibl_consultant_fact`, the old market_map
 # MAGIC (`Geo Enriched.parquet`), UN/LOCODE from `<catalog>.internal_material_data_asset.unlocode_dim` (read only).
-# MAGIC Widget `catalog` picks cdl_mda_dev / cdl_mda_prod. Working files go to the volume `<catalog>.internal_material_data_asset.market_map`
-# MAGIC (created if missing), or to `/mnt/mda-pipeline-temp/market_map` when the volume is not writable.
+# MAGIC Widget `catalog` picks cdl_mda_dev / cdl_mda_prod. Reference data is downloaded on every run into a private
+# MAGIC temporary folder (about 50 MB).
 # MAGIC
 # MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `market_map_location_dim` (one row per location),
 # MAGIC `market_map` (pairs in the legacy `Geo_Enriched` layout), `market_map_location_dim_history` (snapshot per
-# MAGIC build_date), `market_map_dq`. Review list, report and candidates go to the output volume as CSV.
+# MAGIC build_date), `market_map_dq`. Review list, report and candidates go to `/mnt/mda-pipeline-temp/market_map` as CSV.
 # MAGIC
 # MAGIC Cells whose first line is `# CORE` are plain Python (no Spark) so the same code runs locally
 # MAGIC (`market_map/run_local.py`).
@@ -56,12 +56,10 @@
 #   incremental - keep every coordinate already accepted (status OK), geocode only new / unresolved locations
 #   full        - recompute every coordinate (after reference refresh or rule changes); history is kept
 dbutils.widgets.dropdown("mode", "incremental", ["incremental", "full"])
-dbutils.widgets.dropdown("refresh_refs", "false", ["false", "true"])
 dbutils.widgets.dropdown("catalog", "cdl_mda_prod", ["cdl_mda_prod", "cdl_mda_dev"])
 MODE = dbutils.widgets.get("mode")
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = "internal_material_data_asset"
-REFRESH_REFS = dbutils.widgets.get("refresh_refs") == "true"   # re-download GeoNames / Natural Earth / ports
 
 # Parquet outputs (same convention as the other refined tables: /mnt/mda-pipeline-refined/<name>).
 # NOT "unlocode_dim": that name is the UN/LOCODE source table read below.
@@ -80,11 +78,8 @@ TARGET_TABLE = f"{CATALOG}.{SCHEMA}.market_map_location_dim"
 # DQ gate: stop before writing when more than this share of rate records sits on unresolved locations
 MAX_UNRESOLVED_RECORD_SHARE = 0.01
 
-# Working storage for cached reference data and CSV outputs. The volume is created if missing; when it cannot be
-# created or written, FALLBACK_DIR is used instead (see Step 1).
-VOLUME_NAME = "market_map"
-VOLUME_DIR = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME_NAME}"
-FALLBACK_DIR = "dbfs:/mnt/mda-pipeline-temp/market_map"
+# Review list, report, candidates and DQ results as CSV / markdown
+OUT_DIR = "dbfs:/mnt/mda-pipeline-temp/market_map"
 
 # --- Sources (read directly, no CSV exports)
 CONSULTANT_FACT_PATH = "/mnt/mda-pipeline-refined/ibl_consultant_fact"
@@ -146,176 +141,57 @@ OPTIONAL_REFS = {"wpi.csv", "searoute_ports.geojson", "seaports.json"}
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 1: Working storage, reference data, inputs
-# MAGIC ### Step 1a: Working storage
+# MAGIC ## Step 1: Reference data and inputs
+# MAGIC ### Step 1a: Download and unpack reference files
 
 # COMMAND ----------
 
 import os
-import re
 import tempfile
+import time
 import urllib.request
 import zipfile
 
-# Python only touches local disk; volume / mount files go through dbutils.fs (works in every access mode)
-LOCAL_TMP = ("/local_disk0/tmp/market_map" if os.access("/local_disk0", os.W_OK)
-             else os.path.join(tempfile.gettempdir(), "market_map"))
-os.makedirs(LOCAL_TMP, exist_ok=True)
+# A new private folder on every run. A fixed path such as /tmp/market_map fails on shared clusters,
+# where each session runs as its own Linux user and cannot write into a folder an earlier session created.
+WORK_DIR = tempfile.mkdtemp(prefix="market_map_")
 
-
-def _first_line(e):
-    """Most informative line of an error (Py4J errors start with 'An error occurred while calling ...')."""
-    lines = [l.strip() for l in str(e).splitlines() if l.strip()]
-    lines = [l for l in lines if not l.startswith(("at ", "An error occurred while calling", "..."))]
-    for pat in (r"AccessDenied|Access Denied|403|Forbidden|PERMISSION_DENIED|denied|not allowed",
-                r"Exception|Error"):
-        hits = [l for l in lines if re.search(pat, l)]
-        if hits:
-            return hits[0][:300]
-    return (lines[0] if lines else type(e).__name__)[:300]
-
-
-CACHE_OK = True  # set False after the first failed copy between local disk and storage
-
-
-def _exists(uri):
-    try:
-        dbutils.fs.ls(uri)
-        return True
-    except Exception:
-        return False
-
-
-def _writable(uri):
-    try:
-        dbutils.fs.mkdirs(uri)
-        dbutils.fs.put(f"{uri}/_write_probe", "ok", True)
-        dbutils.fs.rm(f"{uri}/_write_probe")
-        return True
-    except Exception as e:
-        print(f"  cannot write {uri}: {_first_line(e)}")
-        return False
-
-
-try:
-    spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME_NAME}")
-except Exception as e:
-    print(f"  cannot create volume {CATALOG}.{SCHEMA}.{VOLUME_NAME}: {_first_line(e)}")
-
-if _writable(VOLUME_DIR):
-    STORE_DIR = VOLUME_DIR
-elif _writable(FALLBACK_DIR):
-    STORE_DIR = FALLBACK_DIR
-    print(f"WARNING: volume not writable, using {FALLBACK_DIR}")
-else:
-    raise PermissionError(
-        f"No writable working storage. Either create the volume and grant write access:\n"
-        f"  CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME_NAME};\n"
-        f"  GRANT READ VOLUME, WRITE VOLUME ON VOLUME {CATALOG}.{SCHEMA}.{VOLUME_NAME} TO `<you or the job principal>`;\n"
-        f"or set FALLBACK_DIR to a path you can write.")
-REF_DIR = f"{STORE_DIR}/reference"   # downloaded reference data (cached between runs)
-OUT_DIR = f"{STORE_DIR}/output"      # review list, report, candidates (CSV / markdown)
-print(f"working storage: {STORE_DIR}  (messages above about the volume are expected when it is not writable)")
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step 1b: Download reference files (3 attempts each)
-
-# COMMAND ----------
-
-import time
-
-def _download(name, url):
-    """Local copy of a reference file: from the cache when present, else downloaded (and cached)."""
-    local_path = f"{LOCAL_TMP}/{name}"
-    cached = f"{REF_DIR}/{name}"
-    global CACHE_OK
-    if CACHE_OK and not REFRESH_REFS and _exists(cached):
-        try:
-            dbutils.fs.cp(cached, f"file:{local_path}")
-            return local_path
-        except Exception as e:
-            CACHE_OK = False
-            print(f"  cache not readable, downloading instead: {_first_line(e)}")
-    req = urllib.request.Request(url, headers={"User-Agent": "market-map-build"})
-    with urllib.request.urlopen(req, timeout=600) as r, open(local_path, "wb") as f:
-        f.write(r.read())
-    with open(local_path, "rb") as f:
-        head = f.read(200).lower()
-    if b"<html" in head or b"<!doctype" in head:
-        raise RuntimeError(f"{url} returned an HTML page (service unavailable?)")
-    if CACHE_OK:
-        try:
-            dbutils.fs.cp(f"file:{local_path}", cached)
-        except Exception as e:  # caching only saves download time; the build continues without it
-            CACHE_OK = False
-            print(f"  reference files will not be cached (downloaded on every run): {_first_line(e)}")
-    return local_path
-
-
-def save_output(name, write):
-    """write(local_path) creates the text file locally; it is then copied to OUT_DIR
-    (dbutils.fs.cp, or dbutils.fs.put when the cluster blocks copies from local disk)."""
-    local_path = f"{LOCAL_TMP}/out_{name}"
-    write(local_path)
-    dst = f"{OUT_DIR}/{name}"
-    try:
-        dbutils.fs.cp(f"file:{local_path}", dst)
-        return
-    except Exception as e:
-        first_err = _first_line(e)
-    try:
-        with open(local_path, encoding="utf-8") as f:
-            dbutils.fs.put(dst, f.read(), True)
-    except Exception as e:  # CSV outputs are secondary; the parquet outputs are still written
-        print(f"WARNING: {name} not saved to {OUT_DIR} ({first_err}; {_first_line(e)}). Local copy: {local_path}")
-
-
-local = {}      # reference name -> local file path
-failed = {}     # reference name -> reason
+local, errors = {}, {}
 for name, url in REF_URLS.items():
+    path = f"{WORK_DIR}/{name}"
     for attempt in (1, 2, 3):
         try:
-            local[name] = _download(name, url)
-            print(f"ok   {name}")
+            req = urllib.request.Request(url, headers={"User-Agent": "market-map-build"})
+            with urllib.request.urlopen(req, timeout=600) as r, open(path, "wb") as f:
+                f.write(r.read())
+            local[name] = path
             break
         except Exception as e:
-            reason = _first_line(e)
-            if attempt == 3 or name in OPTIONAL_REFS:
-                failed[name] = reason
-                print(f"{'SKIP' if name in OPTIONAL_REFS else 'FAIL'} {name}: {reason}")
+            errors[name] = str(e)[:200]
+            if name in OPTIONAL_REFS:
                 break
             time.sleep(5 * attempt)
+    status = "ok  " if name in local else ("SKIP" if name in OPTIONAL_REFS else "FAIL")
+    print(f"{status} {name}" + ("" if name in local else f": {errors[name]}"))
 
-missing_required = {k: v for k, v in failed.items() if k not in OPTIONAL_REFS}
-if missing_required:
-    raise RuntimeError("Required reference files could not be downloaded (check the cluster's internet access):\n"
-                       + "\n".join(f"  {k}: {v}  [{REF_URLS[k]}]" for k, v in missing_required.items()))
-print(f"reference files ready: {len(local)} of {len(REF_URLS)} (optional skipped: {sorted(failed) or 'none'})")
+missing = [n for n in REF_URLS if n not in local and n not in OPTIONAL_REFS]
+if missing:
+    raise RuntimeError(f"Could not download required reference files: {missing} - check the cluster's internet access")
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step 1c: Unpack GeoNames
-
-# COMMAND ----------
-
-unz = f"{LOCAL_TMP}/refs"
-os.makedirs(unz, exist_ok=True)
 for name in ["gn_postal_all.zip", "gn_postal_GB.zip", "gn_postal_NL.zip", "gn_postal_CA.zip", "gn_cities500.zip"]:
-    zipfile.ZipFile(local[name]).extractall(unz)
-needed = [f"{unz}/{f}" for f in ("allCountries.txt", "GB_full.txt", "NL_full.txt", "CA_full.txt", "cities500.txt")]
-absent = [f for f in needed if not os.path.exists(f)]
-if absent:
-    raise RuntimeError(f"unpacked files missing: {absent}")
-print("GeoNames unpacked:", ", ".join(f"{os.path.basename(f)} {os.path.getsize(f) / 1e6:.0f} MB" for f in needed))
+    zipfile.ZipFile(local[name]).extractall(WORK_DIR)
+unz = WORK_DIR
+print(f"reference files in {WORK_DIR}")
+
+
+def save_output(name, text):
+    """Write a CSV / markdown text file to OUT_DIR."""
+    dbutils.fs.put(f"{OUT_DIR}/{name}", text, True)
+
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Step 1d: Read the inputs
+# MAGIC ### Step 1b: Read the inputs
 
 # COMMAND ----------
 
@@ -1473,7 +1349,7 @@ def to_spark(pdf):
 
 
 if "PATHS" not in globals() or "build" not in globals():
-    raise RuntimeError("Run all cells above first: Step 1 (1a-1d) and the Core cells")
+    raise RuntimeError("Run all cells above first: Step 1 (1a, 1b) and the Core cells")
 
 run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None  # materialised before overwrite
@@ -1490,11 +1366,11 @@ display(dq)
 display(dim.groupby(["is_active", "change", "status"]).size().reset_index(name="locations"))
 
 # review material is written even when the gate fails, so the failure can be fixed
-save_output("manual_review.csv", lambda p: res["review"].to_csv(p, index=False))
-save_output("location_candidates.csv", lambda p: res["candidates"].to_csv(p, index=False))
-save_output("manual_overrides.csv", lambda p: res["manual"].to_csv(p, index=False))
-save_output("dq_checks.csv", lambda p: dq.to_csv(p, index=False))
-save_output("validation_report.md", lambda p: open(p, "w", encoding="utf-8").write(res["report"]))
+save_output("manual_review.csv", res["review"].to_csv(index=False))
+save_output("location_candidates.csv", res["candidates"].to_csv(index=False))
+save_output("manual_overrides.csv", res["manual"].to_csv(index=False))
+save_output("dq_checks.csv", dq.to_csv(index=False))
+save_output("validation_report.md", res["report"])
 to_spark(dq).write.mode("append").parquet(DQ_PATH)
 
 errors = dq[(dq.severity == "ERROR") & ~dq.passed]
@@ -1535,8 +1411,8 @@ if WRITE_UC_TABLE:
     sdf_dim.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
     print(f"saved {sdf_dim.count()} rows to {TARGET_TABLE}")
 
-save_output("market_map_location_dim_recalculated.csv", lambda p: res["dim"].to_csv(p, index=False))
-save_output("market_map_location_dim.csv", lambda p: dim.to_csv(p, index=False))
-save_output("Geo_Enriched_rebuilt.csv", lambda p: pair.to_csv(p, index=False))
+save_output("market_map_location_dim_recalculated.csv", res["dim"].to_csv(index=False))
+save_output("market_map_location_dim.csv", dim.to_csv(index=False))
+save_output("Geo_Enriched_rebuilt.csv", pair.to_csv(index=False))
 print(f"CSV outputs: {OUT_DIR}")
 print(dim[dim.is_active].change.value_counts().to_string())

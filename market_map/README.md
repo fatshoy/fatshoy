@@ -53,11 +53,11 @@ places, or an ocean port far from the coast that no other source confirms.
 |---|---|
 | `mode=incremental` job | after each consultant rate load (at least weekly); a few minutes, only new locations are geocoded |
 | work through `manual_review.csv` | weekly, together with the incremental run |
-| `mode=full, refresh_refs=true` | quarterly, and after a new UN/LOCODE release (twice a year) or a rule change; compare with the previous snapshot before accepting |
+| `mode=full` | quarterly, and after a new UN/LOCODE release (twice a year) or a rule change; compare with the previous snapshot before accepting |
 
 ## Re-running
 
-Databricks: run the notebook; reference data is downloaded once into the volume `.../market_map/reference/`.
+Databricks: run the notebook (widgets `catalog`, `mode`). Reference data (about 50 MB) is downloaded on every run into a private temporary folder; CSV reports go to `/mnt/mda-pipeline-temp/market_map`.
 
 Locally:
 
