@@ -165,9 +165,13 @@ os.makedirs(LOCAL_TMP, exist_ok=True)
 def _first_line(e):
     """Most informative line of an error (Py4J errors start with 'An error occurred while calling ...')."""
     lines = [l.strip() for l in str(e).splitlines() if l.strip()]
-    causes = [l for l in lines if re.search(r"(Exception|Error|denied|not allowed)", l)
-              and not l.startswith("An error occurred while calling")]
-    return (causes[0] if causes else (lines[0] if lines else type(e).__name__))[:300]
+    lines = [l for l in lines if not l.startswith(("at ", "An error occurred while calling", "..."))]
+    for pat in (r"AccessDenied|Access Denied|403|Forbidden|PERMISSION_DENIED|denied|not allowed",
+                r"Exception|Error"):
+        hits = [l for l in lines if re.search(pat, l)]
+        if hits:
+            return hits[0][:300]
+    return (lines[0] if lines else type(e).__name__)[:300]
 
 
 CACHE_OK = True  # set False after the first failed copy between local disk and storage
