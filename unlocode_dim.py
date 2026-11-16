@@ -146,7 +146,8 @@ OPTIONAL_REFS = {"wpi.csv", "searoute_ports.geojson", "seaports.json"}
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 1: Download reference data to the volume
+# MAGIC ## Step 1: Working storage, reference data, inputs
+# MAGIC ### Step 1a: Working storage
 
 # COMMAND ----------
 
@@ -214,8 +215,17 @@ else:
         f"or set FALLBACK_DIR to a path you can write.")
 REF_DIR = f"{STORE_DIR}/reference"   # downloaded reference data (cached between runs)
 OUT_DIR = f"{STORE_DIR}/output"      # review list, report, candidates (CSV / markdown)
-print(f"working storage: {STORE_DIR}")
+print(f"working storage: {STORE_DIR}  (messages above about the volume are expected when it is not writable)")
 
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Step 1b: Download reference files (3 attempts each)
+
+# COMMAND ----------
+
+import time
 
 def _download(name, url):
     """Local copy of a reference file: from the cache when present, else downloaded (and cached)."""
@@ -263,21 +273,51 @@ def save_output(name, write):
         print(f"WARNING: {name} not saved to {OUT_DIR} ({first_err}; {_first_line(e)}). Local copy: {local_path}")
 
 
-local = {}
+local = {}      # reference name -> local file path
+failed = {}     # reference name -> reason
 for name, url in REF_URLS.items():
-    try:
-        local[name] = _download(name, url)
-        print(f"ok   {name}")
-    except Exception as e:  # optional port gazetteers may be down; the build then runs without them
-        if name not in OPTIONAL_REFS:
-            raise
-        print(f"SKIP {name}: {_first_line(e)}")
+    for attempt in (1, 2, 3):
+        try:
+            local[name] = _download(name, url)
+            print(f"ok   {name}")
+            break
+        except Exception as e:
+            reason = _first_line(e)
+            if attempt == 3 or name in OPTIONAL_REFS:
+                failed[name] = reason
+                print(f"{'SKIP' if name in OPTIONAL_REFS else 'FAIL'} {name}: {reason}")
+                break
+            time.sleep(5 * attempt)
+
+missing_required = {k: v for k, v in failed.items() if k not in OPTIONAL_REFS}
+if missing_required:
+    raise RuntimeError("Required reference files could not be downloaded (check the cluster's internet access):\n"
+                       + "\n".join(f"  {k}: {v}  [{REF_URLS[k]}]" for k, v in missing_required.items()))
+print(f"reference files ready: {len(local)} of {len(REF_URLS)} (optional skipped: {sorted(failed) or 'none'})")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Step 1c: Unpack GeoNames
+
+# COMMAND ----------
 
 unz = f"{LOCAL_TMP}/refs"
 os.makedirs(unz, exist_ok=True)
 for name in ["gn_postal_all.zip", "gn_postal_GB.zip", "gn_postal_NL.zip", "gn_postal_CA.zip", "gn_cities500.zip"]:
     zipfile.ZipFile(local[name]).extractall(unz)
+needed = [f"{unz}/{f}" for f in ("allCountries.txt", "GB_full.txt", "NL_full.txt", "CA_full.txt", "cities500.txt")]
+absent = [f for f in needed if not os.path.exists(f)]
+if absent:
+    raise RuntimeError(f"unpacked files missing: {absent}")
+print("GeoNames unpacked:", ", ".join(f"{os.path.basename(f)} {os.path.getsize(f) / 1e6:.0f} MB" for f in needed))
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Step 1d: Read the inputs
+
+# COMMAND ----------
 
 inputs = {
     "consultant": spark.sql(SQL_LOCATIONS).toPandas(),
@@ -288,6 +328,10 @@ inputs = {
 for k, v in inputs.items():
     print(f"{k:10s} {'(legacy pairs)' if v is None else f'{len(v):,} rows'}")
 
+
+for k in ("consultant", "unlocode", "legacy"):
+    if inputs[k] is None or len(inputs[k]) == 0:
+        raise RuntimeError(f"input '{k}' is empty - check the source query in Configuration")
 
 PATHS = {
     **inputs,
@@ -300,6 +344,7 @@ PATHS = {
     "searoute": local.get("searoute_ports.geojson"),
     "seaports": local.get("seaports.json"),
 }
+print("Step 1 complete - inputs and reference files ready")
 
 # COMMAND ----------
 
@@ -1426,6 +1471,9 @@ def to_spark(pdf):
         cols.append([None if pd.isna(v) else f(v) for v in s])
     return spark.createDataFrame(list(zip(*cols)), T.StructType(fields))
 
+
+if "PATHS" not in globals() or "build" not in globals():
+    raise RuntimeError("Run all cells above first: Step 1 (1a-1d) and the Core cells")
 
 run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None  # materialised before overwrite
