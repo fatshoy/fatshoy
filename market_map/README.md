@@ -59,12 +59,12 @@ places, or an ocean port far from the coast that no other source confirms.
 ## Schedule
 
 Trigger it as often as the orchestration likes (daily is fine): most runs are `SKIP` or `REMAP` and take seconds.
-Work through `manual_review.csv` (in `/mnt/mda-pipeline-temp/market_map/`) weekly; a fix is a line in
+Work through `manual_review.csv` (in `/mnt/mda-pipeline-temp/market_map_reports/`) weekly; a fix is a line in
 `MANUAL_OVERRIDES`, which makes the next run `INCREMENTAL`.
 
 ## Re-running
 
-Databricks: run the notebook (no parameters). Reference data (about 50 MB) is downloaded on every run into a private temporary folder; CSV reports go to `/mnt/mda-pipeline-temp/market_map`.
+Databricks: run the notebook (no parameters). Reference data (about 50 MB) is downloaded on every run into a private temporary folder; CSV reports go to `/mnt/mda-pipeline-temp/market_map_reports`.
 
 Locally:
 

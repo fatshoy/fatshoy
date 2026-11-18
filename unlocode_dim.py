@@ -1,66 +1,89 @@
 # Databricks notebook source
-
 # MAGIC %md
-# MAGIC # market_map: location dim and pair map (consultant rate locations)
+# MAGIC ### Notebook: unlocode_dim (market_map)
+# MAGIC ---
+# MAGIC #### Business Context
+# MAGIC Materializes the **market_map**: one validated latitude/longitude for every consultant rate location (Xeneta,
+# MAGIC Drewry, KN: UN/LOCODE ports, "CITY, POSTAL" trucking points, free-text cities, Drewry port sub-codes) and the
+# MAGIC coordinates of every origin → destination lane, for distance and geography in rate analytics. It replaces the
+# MAGIC old SharePoint `Geo Enriched` map, where about 10% of the points were wrong (geocoder fallback points such as
+# MAGIC China TX / Mexico City / Washington DC, points outside their country, misplaced ports).
 # MAGIC
-# MAGIC Builds one validated coordinate per consultant rate location (UN/LOCODE ports, "CITY, POSTAL" trucking
-# MAGIC points, free-text cities, Drewry port sub-codes) and re-derives the pair-level `market_map` from it.
+# MAGIC Source priority per location (first candidate that passes validation and is not outvoted wins):
+# MAGIC `manual` > `unlocode` (cross-checked with port lists) > port lists (`wpi`, `searoute`, `seaports`) > validated
+# MAGIC `legacy` > GeoNames `postal` > `postal_prefix` > GeoNames `city`. Every point is checked against its country
+# MAGIC polygon, for points shared by different places and for > 50 km disagreement between sources.
 # MAGIC
-# MAGIC **Source priority** (first candidate that passes validation and is not outvoted wins):
-# MAGIC 1. `manual` – reviewed overrides (cell *Manual overrides*)
-# MAGIC 2. `unlocode` – UN/LOCODE coordinates, cross-checked against port gazetteers
-# MAGIC 3. `wpi` / `searoute` / `seaports` – port gazetteers (NGA World Port Index when reachable, Eurostat searoute ports, sea-ports)
-# MAGIC 4. `legacy` – previous market_map point, only if it passes validation
-# MAGIC 5. `postal` – GeoNames postal code (exact)
-# MAGIC 6. `postal_prefix` – GeoNames postal codes sharing the longest prefix
-# MAGIC 7. `city` – GeoNames cities500 / postal place names / admin-1 fallback
+# MAGIC ---
 # MAGIC
-# MAGIC **Validation of every candidate and final point**
-# MAGIC - point-in-polygon against Natural Earth admin-0 for its country (10 km tolerance land, 30 km ports)
-# MAGIC - shared-point detection (one coordinate used by differently named places = geocoder fallback)
-# MAGIC - source disagreement > 50 km (a candidate with no support is dropped when ≥2 other independent sources agree elsewhere)
-# MAGIC - ocean ports > 40 km from the coast without a port-gazetteer confirmation
+# MAGIC #### Source Tables
+# MAGIC | Source | Table | Mount / Path |
+# MAGIC |--------|-------|-------------|
+# MAGIC | IBL | ibl_consultant_fact (locations and lanes) | /mnt/mda-pipeline-refined/ibl_consultant_fact |
+# MAGIC | IBL | Geo Enriched (old market_map, "legacy" candidates) | /mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet |
+# MAGIC | MDA | unlocode_dim (UN/LOCODE, read only) | `<catalog>`.internal_material_data_asset.unlocode_dim |
+# MAGIC | External | GeoNames postal codes, cities500, admin-1 | download.geonames.org |
+# MAGIC | External | Natural Earth admin-0 countries, coastline | raw.githubusercontent.com/nvkelso/natural-earth-vector |
+# MAGIC | External | Port lists: NGA World Port Index, Eurostat searoute, sea-ports | msi.nga.mil, raw.githubusercontent.com |
 # MAGIC
-# MAGIC **Runs on a schedule (dev and prod), no parameters.** dev/prod comes from `catalog` of the standard
-# MAGIC `DQConfig`. On every trigger the notebook reads its inputs and its own previous output and picks:
-# MAGIC - `FULL` – no previous output, `BUILD_VERSION` changed, or the last full run is 90+ days old:
-# MAGIC   download reference data, recompute and accept every coordinate;
-# MAGIC - `INCREMENTAL` – new locations or changed `MANUAL_OVERRIDES`: download reference data, geocode new and
-# MAGIC   unresolved locations, keep every coordinate already accepted;
-# MAGIC - `REMAP` – only new lanes between known locations or changed record counts: no downloads, refresh location
-# MAGIC   metadata and rebuild the pair map;
+# MAGIC #### Target Tables
+# MAGIC | Table | Mount / Path | Write |
+# MAGIC |-------|-------------|-------|
+# MAGIC | market_map_location_dim (one row per location, key cc + loc) | /mnt/mda-pipeline-refined/market_map_location_dim | overwrite |
+# MAGIC | market_map (lanes, legacy Geo_Enriched layout) | /mnt/mda-pipeline-refined/market_map | overwrite |
+# MAGIC | market_map_location_dim_history (dim of every run) | /mnt/mda-pipeline-refined/market_map_location_dim_history | append |
+# MAGIC | market_map_dq (data-quality checks of every run) | /mnt/mda-pipeline-refined/market_map_dq | append |
+# MAGIC
+# MAGIC ---
+# MAGIC
+# MAGIC #### Developers Involved (Git History)
+# MAGIC - Evgeniy-Yakubovskiy
+# MAGIC
+# MAGIC ---
+# MAGIC
+# MAGIC #### Additional Notes
+# MAGIC Runs on a schedule on dev and prod without parameters (`catalog` from DQConfig). Every trigger reads the inputs
+# MAGIC and the notebook's own previous output and picks one action:
+# MAGIC - `FULL` – no previous output, `BUILD_VERSION` changed, or the last FULL is 90+ days old: download reference
+# MAGIC   data, recompute and accept every coordinate;
+# MAGIC - `INCREMENTAL` – new locations or changed `MANUAL_OVERRIDES`: geocode new and unresolved locations, keep every
+# MAGIC   coordinate already accepted;
+# MAGIC - `REMAP` – only new / removed lanes or changed record counts: no downloads, refresh metadata and the lane map;
 # MAGIC - `SKIP` – nothing changed: exit without writing.
-# MAGIC The result is returned with `dbutils.notebook.exit`, e.g. `INCREMENTAL: 3 new locations ...`.
 # MAGIC
-# MAGIC **Data-quality gate**: `run_dq_checks` runs before any write; a failed ERROR check stops the job and nothing is
-# MAGIC overwritten. Results are appended to `market_map_dq`.
-# MAGIC
-# MAGIC **Inputs** (read directly): locations and lanes from `ibl_consultant_fact`, the old market_map
-# MAGIC (`Geo Enriched.parquet`), UN/LOCODE from `<catalog>.internal_material_data_asset.unlocode_dim` (read only).
-# MAGIC Reference data (about 50 MB) is downloaded only for FULL / INCREMENTAL, into a private temporary folder.
-# MAGIC
-# MAGIC **Outputs (parquet, /mnt/mda-pipeline-refined)**: `market_map_location_dim` (one row per location),
-# MAGIC `market_map` (pairs in the legacy `Geo_Enriched` layout), `market_map_location_dim_history` (every run,
-# MAGIC appended), `market_map_dq`. Review list, report and candidates go to `/mnt/mda-pipeline-temp/market_map` as CSV.
-# MAGIC
-# MAGIC Cells whose first line is `# CORE` are plain Python (no Spark) so the same code runs locally
-# MAGIC (`market_map/run_local.py`).
+# MAGIC `run_dq_checks` is a gate before saving (an ERROR stops the run), then the standard temp save,
+# MAGIC `expect_table_records_to_be_unique` and `saveTable`. Review list and reports:
+# MAGIC `/mnt/mda-pipeline-temp/market_map_reports` (`manual_review.csv`: add fixes to `MANUAL_OVERRIDES`).
+# MAGIC Cells starting with `# CORE` are plain Python, so the build also runs locally (`market_map/run_local.py`).
+# MAGIC Bump `BUILD_VERSION` when the coordinate logic changes.
 
 # COMMAND ----------
 
+# DBTITLE 1,Install additional packages
 # MAGIC %pip install shapely==2.0.6 unidecode==1.3.8
 
 # COMMAND ----------
 
+# DBTITLE 1,Run DQ Config
 # MAGIC %run "../../utilities/DQConfig"
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Configuration
+# DBTITLE 1,Import additional functions
+# %pip above runs first because it restarts Python (it would wipe what DQConfig defines)
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of DQConfig
+import os
+import tempfile
+import time
+import urllib.request
+import zipfile
+
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
 # COMMAND ----------
 
+# DBTITLE 1,Configuration
 # dev / prod: `catalog` is set by the standard %run "../../utilities/DQConfig"
 if "catalog" not in globals():
     raise RuntimeError('`catalog` is not defined - run %run "../../utilities/DQConfig" first')
@@ -90,43 +113,13 @@ DQ_PATH = f"{REFINED_ROOT}/{DQ_TABLE_NAME}"
 MAX_UNRESOLVED_RECORD_SHARE = 0.01
 
 # Review list, report, candidates and DQ results as CSV / markdown
-OUT_DIR = "dbfs:/mnt/mda-pipeline-temp/market_map"
+OUT_DIR = "dbfs:/mnt/mda-pipeline-temp/market_map_reports"  # not .../market_map: saveTabletemp uses that
 
-# --- Sources (read directly, no CSV exports)
+# --- Sources
 CONSULTANT_FACT_PATH = "/mnt/mda-pipeline-refined/ibl_consultant_fact"
 LEGACY_MARKET_MAP_PATH = "/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet"
 UNLOCODE_TABLE = f"{CATALOG}.{SCHEMA}.unlocode_dim"
 PAIRS_FROM = "fact"   # "fact" = every origin/dest lane in the consultant fact; "legacy" = pairs of the old market_map
-
-SQL_LOCATIONS = f"""
-SELECT cc, loc,
-       first(loc_desc, true)               AS loc_desc,
-       concat_ws('|', collect_set(mode))   AS modes,
-       concat_ws('|', collect_set(source)) AS sources,
-       count(*)                            AS n_records,
-       max(to_date(rate_valid_to))         AS last_valid_to
-FROM (
-  SELECT trim(origin_loc_country_code) AS cc, trim(origin_loc) AS loc, origin_loc_desc AS loc_desc,
-         mode, source, rate_valid_to
-  FROM parquet.`{CONSULTANT_FACT_PATH}`
-  UNION ALL
-  SELECT trim(dest_loc_country_code), trim(dest_loc), dest_loc_desc, mode, source, rate_valid_to
-  FROM parquet.`{CONSULTANT_FACT_PATH}`
-) t
-WHERE cc IS NOT NULL AND loc IS NOT NULL AND loc <> ''
-GROUP BY cc, loc
-"""
-SQL_PAIRS = f"""
-SELECT DISTINCT trim(origin_loc_country_code) AS origin_loc_country_code, trim(origin_loc) AS origin_loc,
-                trim(dest_loc_country_code)   AS dest_loc_country_code,   trim(dest_loc)   AS dest_loc
-FROM parquet.`{CONSULTANT_FACT_PATH}`
-WHERE origin_loc IS NOT NULL AND dest_loc IS NOT NULL
-"""
-SQL_LEGACY = f"SELECT * FROM parquet.`{LEGACY_MARKET_MAP_PATH}`"
-SQL_UNLOCODE = f"""
-SELECT country_code, loc_code, loc_name, subdivision, function, status, long_lat
-FROM {UNLOCODE_TABLE}
-"""
 
 # never overwrite an input
 _outputs = {DIM_PATH, PAIR_PATH, HISTORY_PATH, DQ_PATH}
@@ -148,6 +141,94 @@ REF_URLS = {
     "seaports.json": "https://raw.githubusercontent.com/marchah/sea-ports/master/lib/ports.json",
 }
 OPTIONAL_REFS = {"wpi.csv", "searoute_ports.geojson", "seaports.json"}
+
+# COMMAND ----------
+
+# DBTITLE 1,Read sources
+spark.read.parquet(CONSULTANT_FACT_PATH).createOrReplaceTempView("ibl_consultant_fact")
+spark.read.parquet(LEGACY_MARKET_MAP_PATH).createOrReplaceTempView("geo_enriched_legacy")
+spark.read.table(UNLOCODE_TABLE).createOrReplaceTempView("unlocode_dim")
+
+# COMMAND ----------
+
+# DBTITLE 1,Data Transformation - SQL
+# all consultant locations (origin + destination)
+sql_locations = """
+SELECT cc, loc,
+       first(loc_desc, true)               AS loc_desc,
+       concat_ws('|', collect_set(mode))   AS modes,
+       concat_ws('|', collect_set(source)) AS sources,
+       count(*)                            AS n_records,
+       max(to_date(rate_valid_to))         AS last_valid_to
+FROM (
+  SELECT trim(origin_loc_country_code) AS cc, trim(origin_loc) AS loc, origin_loc_desc AS loc_desc,
+         mode, source, rate_valid_to
+  FROM ibl_consultant_fact
+  UNION ALL
+  SELECT trim(dest_loc_country_code), trim(dest_loc), dest_loc_desc, mode, source, rate_valid_to
+  FROM ibl_consultant_fact
+) t
+WHERE cc IS NOT NULL AND loc IS NOT NULL AND loc <> ''
+GROUP BY cc, loc
+"""
+# all lanes
+sql_pairs = """
+SELECT DISTINCT trim(origin_loc_country_code) AS origin_loc_country_code, trim(origin_loc) AS origin_loc,
+                trim(dest_loc_country_code)   AS dest_loc_country_code,   trim(dest_loc)   AS dest_loc
+FROM ibl_consultant_fact
+WHERE origin_loc IS NOT NULL AND dest_loc IS NOT NULL
+"""
+sql_legacy = "SELECT * FROM geo_enriched_legacy"
+sql_unlocode = """
+SELECT country_code, loc_code, loc_name, subdivision, function, status, long_lat
+FROM unlocode_dim
+"""
+
+# the geocoding core works on pandas (a few thousand locations)
+inputs = {
+    "consultant": spark.sql(sql_locations).toPandas(),
+    "unlocode": spark.sql(sql_unlocode).toPandas(),
+    "legacy": spark.sql(sql_legacy).toPandas(),
+    "pairs": spark.sql(sql_pairs).toPandas() if PAIRS_FROM == "fact" else None,
+}
+for k, v in inputs.items():
+    print(f"{k:10s} {'(legacy pairs)' if v is None else f'{len(v):,} rows'}")
+for k in ("consultant", "unlocode", "legacy"):
+    if inputs[k] is None or len(inputs[k]) == 0:
+        raise RuntimeError(f"source '{k}' is empty - check Read sources")
+
+# COMMAND ----------
+
+# DBTITLE 1,Helper functions
+def path_has_data(path):
+    try:
+        return any(f.name.endswith(".parquet") for f in dbutils.fs.ls(path))
+    except Exception:
+        return False
+
+
+def to_spark(pdf):
+    """pandas -> Spark with an explicit schema (object columns mix NaN/bool/str, so inference is unreliable)."""
+    fields, cols = [], []
+    for c in pdf.columns:
+        s = pdf[c]
+        vals = s.dropna()
+        if pd.api.types.is_bool_dtype(s) or (len(vals) and vals.map(lambda v: isinstance(v, (bool, np.bool_))).all()):
+            t, f = T.BooleanType(), bool
+        elif pd.api.types.is_integer_dtype(s):
+            t, f = T.LongType(), int
+        elif pd.api.types.is_float_dtype(s):
+            t, f = T.DoubleType(), float
+        else:
+            t, f = T.StringType(), str
+        fields.append(T.StructField(c, t, True))
+        cols.append([None if pd.isna(v) else f(v) for v in s])
+    return spark.createDataFrame(list(zip(*cols)), T.StructType(fields))
+
+
+def save_output(name, text):
+    """Write a CSV / markdown report to OUT_DIR."""
+    dbutils.fs.put(f"{OUT_DIR}/{name}", text, True)
 
 # COMMAND ----------
 
@@ -1355,58 +1436,12 @@ def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 1: Read inputs and decide FULL / INCREMENTAL / REMAP / SKIP
-# MAGIC ### Step 1a: Inputs, previous output, decision (no downloads)
+# MAGIC ## Step 1: Decide FULL / INCREMENTAL / REMAP / SKIP
+# MAGIC ### Step 1a: Previous output and decision (no downloads)
 
 # COMMAND ----------
 
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-
-
-def path_has_data(path):
-    try:
-        return any(f.name.endswith(".parquet") for f in dbutils.fs.ls(path))
-    except Exception:
-        return False
-
-
-def to_spark(pdf):
-    """pandas -> Spark with an explicit schema (object columns mix NaN/bool/str, so inference is unreliable)."""
-    fields, cols = [], []
-    for c in pdf.columns:
-        s = pdf[c]
-        vals = s.dropna()
-        if pd.api.types.is_bool_dtype(s) or (len(vals) and vals.map(lambda v: isinstance(v, (bool, np.bool_))).all()):
-            t, f = T.BooleanType(), bool
-        elif pd.api.types.is_integer_dtype(s):
-            t, f = T.LongType(), int
-        elif pd.api.types.is_float_dtype(s):
-            t, f = T.DoubleType(), float
-        else:
-            t, f = T.StringType(), str
-        fields.append(T.StructField(c, t, True))
-        cols.append([None if pd.isna(v) else f(v) for v in s])
-    return spark.createDataFrame(list(zip(*cols)), T.StructType(fields))
-
-
-def save_output(name, text):
-    """Write a CSV / markdown text file to OUT_DIR."""
-    dbutils.fs.put(f"{OUT_DIR}/{name}", text, True)
-
-
-inputs = {
-    "consultant": spark.sql(SQL_LOCATIONS).toPandas(),
-    "unlocode": spark.sql(SQL_UNLOCODE).toPandas(),
-    "legacy": spark.sql(SQL_LEGACY).toPandas(),
-    "pairs": spark.sql(SQL_PAIRS).toPandas() if PAIRS_FROM == "fact" else None,
-}
-for k, v in inputs.items():
-    print(f"{k:10s} {'(legacy pairs)' if v is None else f'{len(v):,} rows'}")
-for k in ("consultant", "unlocode", "legacy"):
-    if inputs[k] is None or len(inputs[k]) == 0:
-        raise RuntimeError(f"input '{k}' is empty - check the source query in Configuration")
+from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of DQConfig
 
 # previous output, materialised before anything is overwritten
 prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None
@@ -1419,7 +1454,7 @@ ACTION, REASON = decide(LOCS, PAIRS_IN, prev, prev_pairs, OV_HASH, run_date, BUI
 print(f"\n>>> {ACTION}: {REASON}")
 
 if ACTION == "SKIP":
-    dbutils.notebook.exit(f"SKIP: {REASON}")
+    dbutils.notebook.exit(notebookReturnSuccess)
 
 # COMMAND ----------
 
@@ -1427,12 +1462,6 @@ if ACTION == "SKIP":
 # MAGIC ### Step 1b: Download reference files (FULL / INCREMENTAL only)
 
 # COMMAND ----------
-
-import os
-import tempfile
-import time
-import urllib.request
-import zipfile
 
 PATHS = None
 if ACTION in ("FULL", "INCREMENTAL"):
@@ -1522,42 +1551,62 @@ print("DQ gate passed")
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Step 3: Save parquet with saveTable (dim, pair map, history)
+# DBTITLE 1,Backup saving
+saveTabletemp("market_map_location_dim", "parquet", "overwrite", to_spark(dim))
+saveTabletemp("market_map", "parquet", "overwrite", to_spark(pair))
 
 # COMMAND ----------
 
+# DBTITLE 1,DQ check and save to SA
+market_map_location_dim_temp = spark.read.parquet("/mnt/mda-pipeline-temp/market_map_location_dim")
+market_map_temp = spark.read.parquet("/mnt/mda-pipeline-temp/market_map")
 
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
+expect_table_records_to_be_unique(market_map_location_dim_temp, "market_map_location_dim", False, ["cc", "loc"], False)
+if result == "Success":
+    saveTable("market_map_location_dim", "parquet", "overwrite", market_map_location_dim_temp)
 
+expect_table_records_to_be_unique(market_map_temp, "market_map", False,
+                                  ["origin_loc_country_code", "origin_loc", "dest_loc_country_code", "dest_loc"], False)
+if result == "Success":
+    saveTable("market_map", "parquet", "overwrite", market_map_temp)
 
-def save_checked(name, path, pdf):
-    """Overwrite /mnt/mda-pipeline-refined/<name> with saveTable and check the row count."""
-    sdf = to_spark(pdf)
-    saveTable(name, "parquet", "overwrite", sdf)
-    back = spark.read.parquet(path).count()
-    if back != len(pdf):
-        raise ValueError(f"{path}: wrote {len(pdf)} rows, read back {back}")
-    print(f"saved {back} rows to {path}")
-    return sdf
+# COMMAND ----------
 
+# DBTITLE 1,Append history
+saveTable("market_map_location_dim_history", "parquet", "append",
+          market_map_location_dim_temp.withColumn("build_date", F.lit(run_date)))
 
-sdf_dim = save_checked(DIM_TABLE_NAME, DIM_PATH, dim)   # market_map_location_dim
-save_checked(PAIR_TABLE_NAME, PAIR_PATH, pair)          # market_map
+# COMMAND ----------
 
-# history: every run appended with its build_date / build_ts (latest snapshot = max(build_ts))
-saveTable(HISTORY_TABLE_NAME, "parquet", "append", sdf_dim.withColumn("build_date", F.lit(run_date)))
-print(f"appended {len(dim)} rows to {HISTORY_PATH}")
-
+# DBTITLE 1,Review reports (CSV)
 if res:
     save_output("market_map_location_dim_recalculated.csv", res["dim"].to_csv(index=False))
 save_output("market_map_location_dim.csv", dim.to_csv(index=False))
 save_output("Geo_Enriched_rebuilt.csv", pair.to_csv(index=False))
-print(f"CSV outputs: {OUT_DIR}")
+print(f"reports: {OUT_DIR}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Data Lineage
+# market_map_location_dim = [["/mnt/mda-pipeline-refined/ibl_consultant_fact/",
+#                             "/mnt/sharepoint/ibl/market_rate_long_lat_map/Geo Enriched.parquet",
+#                             "cdl_mda_prod.internal_material_data_asset.unlocode_dim"
+#                            ], ["/mnt/mda-pipeline-refined/market_map_location_dim/"]]
+# source_target_logging(market_map_location_dim)
+# market_map = [["/mnt/mda-pipeline-refined/ibl_consultant_fact/",
+#                "/mnt/mda-pipeline-refined/market_map_location_dim/"
+#               ], ["/mnt/mda-pipeline-refined/market_map/"]]
+# source_target_logging(market_map)
+# market_map_location_dim_history = [["/mnt/mda-pipeline-refined/market_map_location_dim/"
+#                                    ], ["/mnt/mda-pipeline-refined/market_map_location_dim_history/"]]
+# source_target_logging(market_map_location_dim_history)
+
+# COMMAND ----------
+
+# DBTITLE 1,Notebook Exit
 act = dim[dim.is_active]
 counts = act.change.value_counts().to_dict()
-summary = (f"{ACTION}: {REASON} | locations {len(act)} (new {counts.get('new', 0)}, updated {counts.get('updated', 0)}, "
-           f"kept {counts.get('kept', 0) + counts.get('unchanged', 0)}), pairs {len(pair)}, "
-           f"review {int((act.status != 'OK').sum())}, DQ errors 0")
-print(summary)
-dbutils.notebook.exit(summary)
+print(f"{ACTION}: {REASON} | locations {len(act)} (new {counts.get('new', 0)}, updated {counts.get('updated', 0)}, "
+      f"kept {counts.get('kept', 0) + counts.get('unchanged', 0)}), pairs {len(pair)}, "
+      f"review {int((act.status != 'OK').sum())}")
+dbutils.notebook.exit(notebookReturnSuccess)
