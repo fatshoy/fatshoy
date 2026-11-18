@@ -71,7 +71,9 @@
 
 # DBTITLE 1,Import additional functions
 # %pip above runs first because it restarts Python (it would wipe what DQConfig defines)
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of DQConfig
+# max/min/round/abs stay as DQConfig defines them (Spark functions, used by its helpers);
+# this notebook calls the Python versions explicitly as builtins.max(...) etc.
+import builtins
 import os
 import tempfile
 import time
@@ -238,7 +240,7 @@ def save_output(name, text):
 # COMMAND ----------
 
 # CORE
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
+import builtins  # explicit builtins.max(...) etc.: DQConfig rebinds max/min/round/abs to Spark functions
 import difflib
 import json
 import math
@@ -275,7 +277,7 @@ def hav(lat1, lon1, lat2, lon2):
     p = math.pi / 180
     a = (math.sin((lat2 - lat1) * p / 2) ** 2
          + math.cos(lat1 * p) * math.cos(lat2 * p) * math.sin((lon2 - lon1) * p / 2) ** 2)
-    return 12742.0 * math.asin(min(1.0, math.sqrt(a)))
+    return 12742.0 * math.asin(builtins.min(1.0, math.sqrt(a)))
 
 
 _ABBR = {"ST": "SAINT", "STE": "SAINTE", "MT": "MOUNT", "FT": "FORT", "PTO": "PUERTO", "S": "SAN"}
@@ -358,7 +360,7 @@ def parse_unlocode_ll(s):
 
 def _median_point(lats, lons):
     lat, lon = float(np.median(lats)), float(np.median(lons))
-    spread = max((hav(lat, lon, a, b) for a, b in zip(lats, lons)), default=0.0)
+    spread = builtins.max((hav(lat, lon, a, b) for a, b in zip(lats, lons)), default=0.0)
     return lat, lon, spread
 
 
@@ -392,7 +394,7 @@ class Countries:
         for c in codes:
             p1, _ = nearest_points(self.geom[c], pt)
             d = hav(lat, lon, p1.y, p1.x)
-            best = d if best is None else min(best, d)
+            best = d if best is None else builtins.min(best, d)
         return "outside", best
 
     def locate(self, lat, lon):
@@ -423,7 +425,7 @@ class Coast:
         for i in cand:
             p1, _ = nearest_points(self.lines[i], pt)
             d = hav(lat, lon, p1.y, p1.x)
-            best = d if best is None else min(best, d)
+            best = d if best is None else builtins.min(best, d)
         return best
 
 
@@ -544,7 +546,7 @@ class Postal:
                 c.update(src="postal", detail=f"code={k}")
                 return c
         keys = self.keys[cc]
-        for L in range(len(key) - 1, max(2, len(key) - 3) - 1, -1):
+        for L in range(len(key) - 1, builtins.max(2, len(key) - 3) - 1, -1):
             pre = key[:L]
             i = bisect_left(keys, pre)
             matched = []
@@ -641,13 +643,13 @@ class Cities:
         anchored = False
         pick = groups[0]
         if len(groups) > 1 and anchors:
-            dists = [min(hav(lats[g], lons[g], a, b) for a, b in anchors) for g in groups]
-            if min(dists) <= MAX_DISAGREE_KM:
+            dists = [builtins.min(hav(lats[g], lons[g], a, b) for a, b in anchors) for g in groups]
+            if builtins.min(dists) <= MAX_DISAGREE_KM:
                 pick = groups[int(np.argmin(dists))]
                 anchored = True
         return {"src": "city", "lat": lats[pick], "lon": lons[pick], "detail": detail, "place": names[pick],
                 "n_homonyms": len(groups), "loose": loose, "anchored": anchored,
-                "dominant": len(groups) == 1 or pops[groups[0]] >= 10 * max(1, pops[groups[1]])}
+                "dominant": len(groups) == 1 or pops[groups[0]] >= 10 * builtins.max(1, pops[groups[1]])}
 
 # COMMAND ----------
 
@@ -658,7 +660,6 @@ class Cities:
 # COMMAND ----------
 
 # CORE
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 MANUAL_OVERRIDES = [
     # cc, loc, lat, lon, validate_cc, note
     ("AS", "ASPPG", -14.2766, -170.6900, None, "UN/LOCODE 1416N has the wrong hemisphere; Pago Pago harbour is 14.28S"),
@@ -709,7 +710,6 @@ MANUAL_OVERRIDES = [
 # COMMAND ----------
 
 # CORE
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 def parse_location(cc, loc, desc):
     s = str(loc).strip()
     d = None if str(desc).strip().lower() in ("", "null") else str(desc).strip()
@@ -800,7 +800,7 @@ def _shared_groups(points):
     Locations at one point are the same place when they share any label (base locode, postal code or name)."""
     by = defaultdict(list)
     for k, lat, lon, ident in points:
-        by[(round(lat, SHARED_DECIMALS), round(lon, SHARED_DECIMALS))].append((k, ident))
+        by[(builtins.round(lat, SHARED_DECIMALS), builtins.round(lon, SHARED_DECIMALS))].append((k, ident))
     out = {}
     for members in by.values():
         clusters = []  # list of label sets
@@ -984,15 +984,15 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
             dis_far = [(s, d) for s, d in dis if d > MAX_DISAGREE_KM]
             lvl = _level(chosen, alone=not sup)
             dis_valid = [d for o, (s, d) in zip(others, dis) if o["valid"] and not o.get("outvoted")
-                         and _level(o) >= min(lvl, 2) and _family(o) != _family(chosen)]
-            row.update(lat=round(chosen["lat"], 6), lon=round(chosen["lon"], 6), geo_src=chosen["src"],
+                         and _level(o) >= builtins.min(lvl, 2) and _family(o) != _family(chosen)]
+            row.update(lat=builtins.round(chosen["lat"], 6), lon=builtins.round(chosen["lon"], 6), geo_src=chosen["src"],
                        geo_detail=chosen.get("detail"), supporting_sources="|".join(sorted(set(sup))),
                        n_supporting=len(set(sup)),
-                       max_disagree_km=round(max(dis_valid), 1) if dis_valid else None,
+                       max_disagree_km=builtins.round(builtins.max(dis_valid), 1) if dis_valid else None,
                        disagree_sources="|".join(f"{s}:{d:.0f}km" for s, d in dis_far),
                        outvoted_sources="|".join(o["src"] for o in cands if o.get("outvoted")),
                        country_check=chosen["country_check"],
-                       country_dist_km=None if chosen["country_dist_km"] is None else round(chosen["country_dist_km"], 1))
+                       country_dist_km=None if chosen["country_dist_km"] is None else builtins.round(chosen["country_dist_km"], 1))
             row["geo_conf"] = _confidence(chosen, row)
         else:
             row.update(lat=None, lon=None, geo_src="none", geo_conf="none", n_supporting=0)
@@ -1006,7 +1006,7 @@ def build(paths, manual=MANUAL_OVERRIDES, log=print):
         if lg:
             row["legacy_lat"], row["legacy_lon"], row["legacy_geo_src"] = lg["lat"], lg["lon"], lg["legacy_src"]
             if chosen:
-                row["legacy_moved_km"] = round(hav(lg["lat"], lg["lon"], chosen["lat"], chosen["lon"]), 1)
+                row["legacy_moved_km"] = builtins.round(hav(lg["lat"], lg["lon"], chosen["lat"], chosen["lon"]), 1)
         port_pts = [(c["lat"], c["lon"]) for c in cands
                     if c["src"] in PORT_REFS and c["valid"] and not c.get("outvoted")]
         row["port_pts"] = port_pts
@@ -1064,12 +1064,12 @@ def _validate(df, countries, coast, label):
         st, d = countries.check(r.validate_cc, r.lat, r.lon)
         tol = PORT_TOL_KM if r.is_port else LAND_TOL_KM
         out_flag.append(st == "outside" and d > tol)
-        dist.append(None if d is None else round(d, 1))
+        dist.append(None if d is None else builtins.round(d, 1))
         pc.append(countries.locate(r.lat, r.lon) if st == "outside" else r.validate_cc)
         shared.append(sh.get((r.cc, r.loc), 1))
         if r.is_port:
             ck = coast.km(r.lat, r.lon)
-            coast_km.append(round(ck, 1))
+            coast_km.append(builtins.round(ck, 1))
             refs_ok = [hav(r.lat, r.lon, a, b) <= MAX_DISAGREE_KM for a, b in r.port_pts]
             misplaced.append((bool(r.port_pts) and not any(refs_ok)) or (not r.port_pts and ck > PORT_INLAND_KM))
         else:
@@ -1220,7 +1220,6 @@ def _report(dim, cands, refs, paths):
 # COMMAND ----------
 
 # CORE
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 # Coordinate and validation columns that are frozen for locations already accepted in an earlier run
 COORD_COLS = ["lat", "lon", "geo_src", "geo_conf", "geo_detail", "supporting_sources", "n_supporting",
               "max_disagree_km", "disagree_sources", "outvoted_sources", "country_check", "country_dist_km",
@@ -1252,7 +1251,7 @@ def merge_incremental(new, prev, manual_keys, run_date, full_rebuild=False):
                   and pd.notna(p.get("lat")))
         if frozen:
             if pd.notna(r["lat"]):
-                new.at[i, "recalc_drift_km"] = round(hav(p["lat"], p["lon"], r["lat"], r["lon"]), 1)
+                new.at[i, "recalc_drift_km"] = builtins.round(hav(p["lat"], p["lon"], r["lat"], r["lon"]), 1)
             for c in COORD_COLS:
                 if c in p:
                     new.at[i, c] = p[c]
@@ -1320,7 +1319,7 @@ def decide(locs, pairs_in, prev, prev_pairs, ov_hash, run_date, build_version, f
     if set(zip(active_prev.cc, active_prev["loc"])) != set(zip(locs.cc, locs["loc"])):
         reasons.append("locations no longer used")
     cur_meta, old_meta = _meta(locs), _meta(prev)
-    changed = sum(1 for k, v in cur_meta.items() if old_meta.get(k) != v)
+    changed = builtins.sum(1 for k, v in cur_meta.items() if old_meta.get(k) != v)
     if changed:
         reasons.append(f"metadata of {changed} locations changed")
     if reasons:
@@ -1395,12 +1394,12 @@ def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=
     add("active locations with low confidence", "WARN", act & (d.geo_conf == "low"), int(act.sum()), d)
     rec = pd.to_numeric(d.n_records, errors="coerce").fillna(0)
     unres = rec[act & (d.status != "OK")].sum()
-    share = unres / max(1, rec[act].sum())
+    share = unres / builtins.max(1, rec[act].sum())
     add(f"records on REVIEW/MISSING locations <= {max_unresolved_record_share:.0%} (now {share:.2%})", "ERROR",
         int(share > max_unresolved_record_share), 1)
     # --- pair map
     add("pair map: same columns as legacy Geo_Enriched", "ERROR", int(list(pair.columns) != PAIR_COLS), 1)
-    add("pair map: no rows lost or added", "ERROR", abs(len(pair) - n_pairs_in), n_pairs_in)
+    add("pair map: no rows lost or added", "ERROR", builtins.abs(len(pair) - n_pairs_in), n_pairs_in)
     look = {(r.cc, r.loc): (r.lat, r.lon) for r in d.itertuples()}
     mism = 0
     for side in ("origin", "dest"):
@@ -1408,7 +1407,7 @@ def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=
                                    pair[f"{side}_lon"]):
             ref = look.get((str(cc).strip().upper(), str(loc).strip()))
             if ref is None or (pd.isna(ref[0]) != pd.isna(la)) or (
-                    pd.notna(la) and (abs(ref[0] - la) > 1e-9 or abs(ref[1] - lo) > 1e-9)):
+                    pd.notna(la) and (builtins.abs(ref[0] - la) > 1e-9 or builtins.abs(ref[1] - lo) > 1e-9)):
                 mism += 1
     add("pair map: every endpoint matches the dim", "ERROR", mism, 2 * len(pair))
     no_xy = pair.origin_lat.isna() | pair.dest_lat.isna()
@@ -1441,7 +1440,6 @@ def run_dq_checks(dim, pair, n_pairs_in, prev=None, max_unresolved_record_share=
 
 # COMMAND ----------
 
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of DQConfig
 
 # previous output, materialised before anything is overwritten
 prev = spark.read.parquet(DIM_PATH).toPandas() if path_has_data(DIM_PATH) else None
@@ -1514,7 +1512,6 @@ else:
 
 # COMMAND ----------
 
-from builtins import abs, max, min, pow, round, sum  # undo `from pyspark.sql.functions import *` of shared helpers
 
 if "ACTION" not in globals() or "build" not in globals():
     raise RuntimeError("Run all cells above first (Core cells and Step 1)")
